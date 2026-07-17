@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../services/invoice_provider.dart';
+import 'create_invoice_screen.dart'; // <-- WE ADDED THIS IMPORT
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -128,9 +129,16 @@ class DashboardScreen extends StatelessWidget {
           );
         },
       ),
+
+      // <-- WE UPDATED THIS BUTTON -->
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
-          // TODO: Navigate to Create Invoice Screen
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const CreateInvoiceScreen(),
+            ),
+          );
         },
         icon: const Icon(Icons.add),
         label: const Text('Create Invoice'),
