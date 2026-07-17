@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../services/invoice_provider.dart';
-import 'create_invoice_screen.dart'; // <-- WE ADDED THIS IMPORT
+import 'create_invoice_screen.dart';
+import 'invoice_detail_screen.dart';
+import 'settings_screen.dart'; // <--- ADDED IMPORT
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -22,7 +24,11 @@ class DashboardScreen extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () {
-              // TODO: Navigate to Settings Screen
+              // Navigate to Settings Screen
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const SettingsScreen()),
+              );
             },
           )
         ],
@@ -46,6 +52,18 @@ class DashboardScreen extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // --- Search Bar ---
+                      TextField(
+                        onChanged: (value) => Provider.of<InvoiceProvider>(context, listen: false).searchInvoices(value),
+                        decoration: InputDecoration(
+                          hintText: 'Search by Name or ID...',
+                          prefixIcon: const Icon(Icons.search),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          filled: true,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
                       // --- Summary Statistics ---
                       _buildSummaryCard(
                         context,
@@ -91,7 +109,8 @@ class DashboardScreen extends StatelessWidget {
               SliverList(
                 delegate: SliverChildBuilderDelegate(
                       (context, index) {
-                    final invoice = provider.invoices[index];
+                    // Using filteredInvoices here
+                    final invoice = provider.filteredInvoices[index];
                     return ListTile(
                       leading: CircleAvatar(
                         backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
@@ -118,11 +137,17 @@ class DashboardScreen extends StatelessWidget {
                         ],
                       ),
                       onTap: () {
-                        // TODO: Navigate to Invoice Detail / PDF view
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => InvoiceDetailScreen(invoice: invoice),
+                          ),
+                        );
                       },
                     );
                   },
-                  childCount: provider.invoices.length,
+                  // Using filteredInvoices length here
+                  childCount: provider.filteredInvoices.length,
                 ),
               ),
             ],
@@ -130,7 +155,6 @@ class DashboardScreen extends StatelessWidget {
         },
       ),
 
-      // <-- WE UPDATED THIS BUTTON -->
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
           Navigator.push(

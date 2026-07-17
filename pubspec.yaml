@@ -38,6 +38,6 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   
-  # Uncomment this later when we add the company logo
+  # Ready for your logo assets later
   # assets:
   #   - assets/images/
