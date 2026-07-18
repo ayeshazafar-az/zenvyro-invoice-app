@@ -6,16 +6,13 @@ import 'package:intl/intl.dart';
 import '../services/invoice_provider.dart';
 import 'create_invoice_screen.dart';
 import 'invoice_detail_screen.dart';
-import 'settings_screen.dart'; // <--- ADDED IMPORT
+import 'settings_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // This formatter makes double values look like "$1,250.00"
-    final currencyFormat = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Dashboard', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -23,12 +20,16 @@ class DashboardScreen extends StatelessWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.settings),
-            onPressed: () {
-              // Navigate to Settings Screen
-              Navigator.push(
+            onPressed: () async {
+              // Wait for user to return from settings
+              await Navigator.push(
                 context,
                 MaterialPageRoute(builder: (context) => const SettingsScreen()),
               );
+              // Force the dashboard to refresh the currency symbol if they changed it
+              if (context.mounted) {
+                Provider.of<InvoiceProvider>(context, listen: false).refreshSettings();
+              }
             },
           )
         ],
@@ -43,6 +44,9 @@ class DashboardScreen extends StatelessWidget {
           if (provider.invoices.isEmpty) {
             return _buildEmptyState(context);
           }
+
+          // --- FIX: Dynamic Currency Formatter ---
+          final currencyFormat = NumberFormat.currency(symbol: '${provider.currencySymbol} ', decimalDigits: 2);
 
           return CustomScrollView(
             slivers: [
@@ -109,7 +113,6 @@ class DashboardScreen extends StatelessWidget {
               SliverList(
                 delegate: SliverChildBuilderDelegate(
                       (context, index) {
-                    // Using filteredInvoices here
                     final invoice = provider.filteredInvoices[index];
                     return ListTile(
                       leading: CircleAvatar(
@@ -146,7 +149,6 @@ class DashboardScreen extends StatelessWidget {
                       },
                     );
                   },
-                  // Using filteredInvoices length here
                   childCount: provider.filteredInvoices.length,
                 ),
               ),

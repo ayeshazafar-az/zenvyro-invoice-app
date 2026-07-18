@@ -10,6 +10,10 @@ class InvoiceProvider with ChangeNotifier {
   String _searchQuery = '';
   bool _isLoading = false;
 
+  // --- NEW: Currency Variable ---
+  String _currencySymbol = '\$';
+  String get currencySymbol => _currencySymbol;
+
   // Getters
   List<Invoice> get invoices => _invoices;
 
@@ -51,8 +55,19 @@ class InvoiceProvider with ChangeNotifier {
 
     _invoices = await DBHelper.instance.getAllInvoices();
 
+    // --- NEW: Fetch Currency from Settings ---
+    final settings = await DBHelper.instance.getSettings();
+    _currencySymbol = settings['currency'] ?? '\$';
+
     _isLoading = false;
     notifyListeners();
+  }
+
+  // --- NEW: Refresh Settings Method ---
+  Future<void> refreshSettings() async {
+    final settings = await DBHelper.instance.getSettings();
+    _currencySymbol = settings['currency'] ?? '\$';
+    notifyListeners(); // Tells the UI to update the symbol immediately
   }
 
   Future<void> addInvoice(Invoice invoice) async {

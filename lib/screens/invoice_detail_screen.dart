@@ -10,7 +10,8 @@ import 'package:printing/printing.dart';
 import '../models/invoice_model.dart';
 import '../services/invoice_provider.dart';
 import '../pdf/pdf_invoice_api.dart';
-import 'create_invoice_screen.dart'; // Added to navigate to Edit/Duplicate
+import '../database/db_helper.dart';
+import 'create_invoice_screen.dart';
 
 class InvoiceDetailScreen extends StatelessWidget {
   final Invoice invoice;
@@ -19,145 +20,128 @@ class InvoiceDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Invoice ${invoice.id}'),
-        actions: [
-          // --- PDF Preview / Print Button ---
-          IconButton(
-            icon: const Icon(Icons.picture_as_pdf, color: Colors.blueAccent),
-            onPressed: () async {
-              final pdfBytes = await PdfInvoiceApi.generate(invoice);
-              await Printing.layoutPdf(onLayout: (format) => pdfBytes);
-            },
-          ),
+    return FutureBuilder<Map<String, dynamic>>(
+      future: DBHelper.instance.getSettings(),
+      builder: (context, snapshot) {
+        final String currency = snapshot.data?['currency'] ?? '\$';
 
-          // --- Native Share Button ---
-          IconButton(
-            icon: const Icon(Icons.share, color: Colors.greenAccent),
-            onPressed: () async {
-              final pdfBytes = await PdfInvoiceApi.generate(invoice);
-              final output = await getTemporaryDirectory();
-              final file = File('${output.path}/Invoice_${invoice.id}.pdf');
-              await file.writeAsBytes(pdfBytes);
-
-              await Share.shareXFiles(
-                [XFile(file.path)],
-                text: 'Here is your invoice #${invoice.id}.',
-              );
-            },
-          ),
-
-          // --- Options Menu (Edit, Duplicate, Delete) ---
-          PopupMenuButton<String>(
-            onSelected: (value) async {
-              if (value == 'edit') {
-                // Navigate to Create Screen in Edit Mode
-                Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => CreateInvoiceScreen(existingInvoice: invoice))
-                );
-              } else if (value == 'duplicate') {
-                // Navigate to Create Screen in Duplicate Mode
-                Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => CreateInvoiceScreen(existingInvoice: invoice, isDuplicate: true))
-                );
-              } else if (value == 'delete') {
-                // 1. Show the Confirmation Dialog
-                final confirm = await showDialog<bool>(
-                  context: context,
-                  builder: (BuildContext context) {
-                    return AlertDialog(
-                      title: const Text('Delete Invoice'),
-                      content: const Text('Are you sure you want to delete this invoice? This action cannot be undone.'),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, false), // Cancel
-                          child: const Text('Cancel'),
-                        ),
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, true), // Confirm
-                          child: const Text(
-                            'Delete',
-                            style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                );
-
-                // 2. If confirmed, delete and go back
-                if (confirm == true) {
-                  if (context.mounted) {
-                    await Provider.of<InvoiceProvider>(context, listen: false).deleteInvoice(invoice.id);
-                    Navigator.pop(context);
+        return Scaffold(
+          appBar: AppBar(
+            title: Text('Invoice ${invoice.id}'),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.picture_as_pdf, color: Colors.blueAccent),
+                onPressed: () async {
+                  final pdfBytes = await PdfInvoiceApi.generate(invoice);
+                  await Printing.layoutPdf(onLayout: (format) => pdfBytes);
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.download, color: Colors.orangeAccent),
+                onPressed: () async {
+                  try {
+                    final pdfBytes = await PdfInvoiceApi.generate(invoice);
+                    Directory? directory = Platform.isAndroid
+                        ? await getExternalStorageDirectory()
+                        : await getApplicationDocumentsDirectory();
+                    if (directory != null) {
+                      final file = File('${directory.path}/Invoice_${invoice.id}.pdf');
+                      await file.writeAsBytes(pdfBytes);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Saved to: ${file.path}'), backgroundColor: Colors.green));
+                      }
+                    }
+                  } catch (e) {
+                    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'), backgroundColor: Colors.red));
                   }
-                }
-              }
-            },
-            itemBuilder: (BuildContext context) => [
-              const PopupMenuItem(
-                  value: 'edit',
-                  child: ListTile(leading: Icon(Icons.edit), title: Text('Edit'))
+                },
               ),
-              const PopupMenuItem(
-                  value: 'duplicate',
-                  child: ListTile(leading: Icon(Icons.copy), title: Text('Duplicate'))
+              IconButton(
+                icon: const Icon(Icons.share, color: Colors.greenAccent),
+                onPressed: () async {
+                  final pdfBytes = await PdfInvoiceApi.generate(invoice);
+                  final output = await getTemporaryDirectory();
+                  final file = File('${output.path}/Invoice_${invoice.id}.pdf');
+                  await file.writeAsBytes(pdfBytes);
+                  await Share.shareXFiles([XFile(file.path)], text: 'Here is your invoice #${invoice.id}.');
+                },
               ),
-              const PopupMenuItem(
-                  value: 'delete',
-                  child: ListTile(leading: Icon(Icons.delete, color: Colors.red), title: Text('Delete', style: TextStyle(color: Colors.red)))
+              PopupMenuButton<String>(
+                onSelected: (value) async {
+                  if (value == 'edit') {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => CreateInvoiceScreen(existingInvoice: invoice)));
+                  } else if (value == 'duplicate') {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => CreateInvoiceScreen(existingInvoice: invoice, isDuplicate: true)));
+                  } else if (value == 'delete') {
+                    final confirm = await showDialog<bool>(context: context, builder: (_) => AlertDialog(title: const Text('Delete Invoice'), content: const Text('Are you sure?'), actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')), TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete', style: TextStyle(color: Colors.red)))]));
+                    if (confirm == true && context.mounted) {
+                      await Provider.of<InvoiceProvider>(context, listen: false).deleteInvoice(invoice.id);
+                      Navigator.pop(context);
+                    }
+                  }
+                },
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: 'edit', child: ListTile(leading: Icon(Icons.edit), title: Text('Edit'))),
+                  const PopupMenuItem(value: 'duplicate', child: ListTile(leading: Icon(Icons.copy), title: Text('Duplicate'))),
+                  const PopupMenuItem(value: 'delete', child: ListTile(leading: Icon(Icons.delete, color: Colors.red), title: Text('Delete', style: TextStyle(color: Colors.red)))),
+                ],
               ),
             ],
           ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Status Card
-            Card(
-              child: ListTile(
-                title: const Text('Status'),
-                trailing: DropdownButton<String>(
-                  value: invoice.status,
-                  items: ['Paid', 'Unpaid', 'Overdue'].map((String value) {
-                    return DropdownMenuItem<String>(value: value, child: Text(value));
-                  }).toList(),
-                  onChanged: (newStatus) {
-                    if (newStatus != null) {
-                      Provider.of<InvoiceProvider>(context, listen: false).updateStatus(invoice.id, newStatus);
-                    }
-                  },
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Card(
+                  child: ListTile(
+                    title: const Text('Status'),
+                    trailing: DropdownButton<String>(
+                      value: invoice.status,
+                      items: ['Paid', 'Unpaid', 'Overdue'].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                      onChanged: (s) => s != null ? Provider.of<InvoiceProvider>(context, listen: false).updateStatus(invoice.id, s) : null,
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(height: 16),
+
+                // --- IMPROVED CUSTOMER DETAILS ---
+                Text('Customer Details', style: Theme.of(context).textTheme.titleLarge),
+                ListTile(
+                  title: const Text('Name', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  subtitle: Text(invoice.customerName, style: const TextStyle(fontSize: 16)),
+                ),
+                ListTile(
+                  title: const Text('Email', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  subtitle: Text(invoice.customerEmail.isNotEmpty ? invoice.customerEmail : 'N/A', style: const TextStyle(fontSize: 16)),
+                ),
+                ListTile(
+                  title: const Text('Phone', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  subtitle: Text(invoice.customerPhone.isNotEmpty ? invoice.customerPhone : 'N/A', style: const TextStyle(fontSize: 16)),
+                ),
+                ListTile(
+                  title: const Text('Address', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  subtitle: Text(invoice.customerAddress.isNotEmpty ? invoice.customerAddress : 'N/A', style: const TextStyle(fontSize: 16)),
+                ),
+                const Divider(),
+
+                Text('Items', style: Theme.of(context).textTheme.titleLarge),
+                ...invoice.items.map((item) => ListTile(
+                  title: Text(item.name),
+                  subtitle: Text('Qty: ${item.quantity}'),
+                  trailing: Text('$currency${(item.unitPrice * item.quantity).toStringAsFixed(2)}'),
+                )),
+                const Divider(),
+                ListTile(
+                  title: const Text('Grand Total', style: TextStyle(fontWeight: FontWeight.bold)),
+                  trailing: Text('$currency${invoice.grandTotal.toStringAsFixed(2)}',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-            // Customer Info
-            Text('Customer Details', style: Theme.of(context).textTheme.titleLarge),
-            ListTile(title: Text(invoice.customerName), subtitle: Text(invoice.customerEmail)),
-            ListTile(title: Text(invoice.customerPhone), subtitle: Text(invoice.customerAddress)),
-            const Divider(),
-            // Items
-            Text('Items', style: Theme.of(context).textTheme.titleLarge),
-            ...invoice.items.map((item) => ListTile(
-              title: Text(item.name),
-              subtitle: Text('Qty: ${item.quantity}'),
-              trailing: Text('\$${(item.unitPrice * item.quantity).toStringAsFixed(2)}'),
-            )),
-            const Divider(),
-            ListTile(
-              title: const Text('Grand Total', style: TextStyle(fontWeight: FontWeight.bold)),
-              trailing: Text('\$${invoice.grandTotal.toStringAsFixed(2)}',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }

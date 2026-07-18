@@ -4,9 +4,14 @@ import 'dart:typed_data';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import '../models/invoice_model.dart';
+import '../database/db_helper.dart'; // Added to fetch settings
 
 class PdfInvoiceApi {
   static Future<Uint8List> generate(Invoice invoice) async {
+    // --- FETCH CURRENCY FROM SETTINGS ---
+    final settings = await DBHelper.instance.getSettings();
+    final String currency = settings['currency'] ?? '\$';
+
     final pdf = pw.Document();
 
     pdf.addPage(
@@ -18,9 +23,9 @@ class PdfInvoiceApi {
           pw.SizedBox(height: 30),
           _buildInvoiceDetails(invoice),
           pw.SizedBox(height: 20),
-          _buildItemsTable(invoice),
+          _buildItemsTable(invoice, currency), // Passed currency
           pw.Divider(color: PdfColors.grey400),
-          _buildTotal(invoice),
+          _buildTotal(invoice, currency),      // Passed currency
           if (invoice.notes.isNotEmpty) ...[
             pw.SizedBox(height: 30),
             _buildNotes(invoice.notes),
@@ -37,7 +42,6 @@ class PdfInvoiceApi {
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        // Company Info
         pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
@@ -50,12 +54,10 @@ class PdfInvoiceApi {
               ),
             ),
             pw.SizedBox(height: 4),
-            // You can replace these with actual company settings variables later
             _buildLabelText('Address:', 'Islamabad'),
             _buildLabelText('Phone:', '0288282'),
           ],
         ),
-        // INVOICE Title
         pw.Text(
           'INVOICE',
           style: pw.TextStyle(
@@ -73,7 +75,6 @@ class PdfInvoiceApi {
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        // Customer Info
         pw.Expanded(
           child: pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -101,7 +102,6 @@ class PdfInvoiceApi {
             ],
           ),
         ),
-        // Invoice Meta Data
         pw.Expanded(
           child: pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.end,
@@ -117,16 +117,16 @@ class PdfInvoiceApi {
     );
   }
 
-  static pw.Widget _buildItemsTable(Invoice invoice) {
+  static pw.Widget _buildItemsTable(Invoice invoice, String currency) {
     final headers = ['Description', 'Qty', 'Unit Price', 'Discount', 'Total'];
 
     final data = invoice.items.map((item) {
       return [
         item.name,
         '${item.quantity}',
-        '\$${item.unitPrice.toStringAsFixed(2)}',
-        '\$${item.discount.toStringAsFixed(2)}',
-        '\$${item.total.toStringAsFixed(2)}',
+        '$currency${item.unitPrice.toStringAsFixed(2)}', // Using dynamic currency
+        '$currency${item.discount.toStringAsFixed(2)}', // Using dynamic currency
+        '$currency${item.total.toStringAsFixed(2)}',    // Using dynamic currency
       ];
     }).toList();
 
@@ -150,7 +150,7 @@ class PdfInvoiceApi {
     );
   }
 
-  static pw.Widget _buildTotal(Invoice invoice) {
+  static pw.Widget _buildTotal(Invoice invoice, String currency) {
     return pw.Container(
       alignment: pw.Alignment.centerRight,
       child: pw.Row(
@@ -163,12 +163,12 @@ class PdfInvoiceApi {
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
                 pw.SizedBox(height: 10),
-                _buildSummaryRow('Subtotal', '\$${invoice.subtotal.toStringAsFixed(2)}'),
-                _buildSummaryRow('Tax (${invoice.taxRate}%)', '\$${invoice.taxAmount.toStringAsFixed(2)}'),
+                _buildSummaryRow('Subtotal', '$currency${invoice.subtotal.toStringAsFixed(2)}'), // Using dynamic currency
+                _buildSummaryRow('Tax (${invoice.taxRate}%)', '$currency${invoice.taxAmount.toStringAsFixed(2)}'), // Using dynamic currency
                 pw.Divider(color: PdfColors.grey400),
                 _buildSummaryRow(
                   'Grand Total',
-                  '\$${invoice.grandTotal.toStringAsFixed(2)}',
+                  '$currency${invoice.grandTotal.toStringAsFixed(2)}', // Using dynamic currency
                   isGrandTotal: true,
                 ),
               ],
@@ -192,8 +192,6 @@ class PdfInvoiceApi {
       ],
     );
   }
-
-  // --- HELPER WIDGETS ---
 
   static pw.Widget _buildLabelText(String label, String value) {
     return pw.Padding(
