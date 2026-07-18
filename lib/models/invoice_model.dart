@@ -41,15 +41,14 @@ class Invoice {
   final String id;
   final String companyName;
   final String customerName;
-  // --- NEW FIELDS ---
   final String customerEmail;
   final String customerPhone;
   final String customerAddress;
-  // ------------------
   final String date;
   final String dueDate;
   final String status;
   final double taxRate;
+  final String notes; // --- ADDED FOR NOTES & INSTRUCTIONS ---
   List<InvoiceItem> items;
 
   Invoice({
@@ -63,6 +62,7 @@ class Invoice {
     required this.dueDate,
     required this.status,
     required this.taxRate,
+    required this.notes, // --- ADDED TO CONSTRUCTOR ---
     required this.items,
   });
 
@@ -74,13 +74,14 @@ class Invoice {
     'id': id,
     'companyName': companyName,
     'customerName': customerName,
-    'customerEmail': customerEmail,     // Added to map
-    'customerPhone': customerPhone,     // Added to map
-    'customerAddress': customerAddress, // Added to map
+    'customerEmail': customerEmail,
+    'customerPhone': customerPhone,
+    'customerAddress': customerAddress,
     'date': date,
     'dueDate': dueDate,
     'status': status,
     'taxRate': taxRate,
+    'notes': notes, // --- ADDED TO MAP ---
   };
 
   factory Invoice.fromMap(Map<String, dynamic> map, List<InvoiceItem> items) {
@@ -88,7 +89,6 @@ class Invoice {
       id: map['id'],
       companyName: map['companyName'],
       customerName: map['customerName'],
-      // We use ?? '' as a safety net in case a field is ever null
       customerEmail: map['customerEmail'] ?? '',
       customerPhone: map['customerPhone'] ?? '',
       customerAddress: map['customerAddress'] ?? '',
@@ -96,6 +96,7 @@ class Invoice {
       dueDate: map['dueDate'],
       status: map['status'],
       taxRate: map['taxRate'],
+      notes: map['notes'] ?? '', // --- RETRIEVED FROM MAP ---
       items: items,
     );
   }

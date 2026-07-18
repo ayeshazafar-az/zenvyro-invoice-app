@@ -6,8 +6,8 @@ import '../database/db_helper.dart';
 
 class InvoiceProvider with ChangeNotifier {
   List<Invoice> _invoices = [];
-  List<Invoice> _filteredInvoices = []; // New list for search results
-  String _searchQuery = '';             // New variable to track search input
+  List<Invoice> _filteredInvoices = [];
+  String _searchQuery = '';
   bool _isLoading = false;
 
   // Getters
@@ -19,7 +19,6 @@ class InvoiceProvider with ChangeNotifier {
   bool get isLoading => _isLoading;
 
   // --- Dashboard Statistics ---
-  // We use _invoices here to ensure statistics are always based on ALL data
   int get totalInvoices => _invoices.length;
 
   int get paidInvoices => _invoices.where((inv) => inv.status == 'Paid').length;
@@ -87,6 +86,7 @@ class InvoiceProvider with ChangeNotifier {
         dueDate: oldInv.dueDate,
         status: newStatus,
         taxRate: oldInv.taxRate,
+        notes: oldInv.notes, // --- ADDED THIS LINE HERE ---
         items: oldInv.items,
       );
 

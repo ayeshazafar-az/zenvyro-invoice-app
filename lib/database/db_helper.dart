@@ -12,7 +12,8 @@ class DBHelper {
 
   Future<Database> get database async {
     if (_database != null) return _database!;
-    _database = await _initDB('zenvyro_invoices_v2.db');
+    // Bumped to v3 to trigger a fresh schema generation with the new columns
+    _database = await _initDB('zenvyro_invoices_v3.db');
     return _database!;
   }
 
@@ -24,7 +25,7 @@ class DBHelper {
   }
 
   Future _createDB(Database db, int version) async {
-    // 1. Create Invoices Table
+    // 1. Create Invoices Table (Added 'notes' column)
     await db.execute('''
       CREATE TABLE invoices (
         id TEXT PRIMARY KEY,
@@ -36,7 +37,8 @@ class DBHelper {
         date TEXT NOT NULL,
         dueDate TEXT NOT NULL,
         status TEXT NOT NULL,
-        taxRate REAL NOT NULL
+        taxRate REAL NOT NULL,
+        notes TEXT
       )
     ''');
 
@@ -53,18 +55,25 @@ class DBHelper {
       )
     ''');
 
-    // 3. Create Settings Table
+    // 3. Create Settings Table (Added logoPath, currency, defaultTaxRate, invoicePrefix)
     await db.execute('''
       CREATE TABLE settings (
         id INTEGER PRIMARY KEY,
         companyName TEXT,
         companyAddress TEXT,
-        companyPhone TEXT
+        companyPhone TEXT,
+        logoPath TEXT,
+        currency TEXT,
+        defaultTaxRate REAL,
+        invoicePrefix TEXT
       )
     ''');
 
-    // Seed default settings row
-    await db.execute('INSERT INTO settings (id, companyName, companyAddress, companyPhone) VALUES (1, "My Company", "", "")');
+    // Seed default settings row with the new values
+    await db.execute('''
+      INSERT INTO settings (id, companyName, companyAddress, companyPhone, logoPath, currency, defaultTaxRate, invoicePrefix) 
+      VALUES (1, "My Company", "", "", "", "\$", 0.0, "INV-")
+    ''');
   }
 
   // --- SETTINGS CRUD ---
@@ -72,15 +81,38 @@ class DBHelper {
   Future<Map<String, dynamic>> getSettings() async {
     final db = await instance.database;
     final res = await db.query('settings', where: 'id = ?', whereArgs: [1]);
-    return res.isNotEmpty ? res.first : {'companyName': 'My Company', 'companyAddress': '', 'companyPhone': ''};
+    return res.isNotEmpty
+        ? res.first
+        : {
+      'companyName': 'My Company',
+      'companyAddress': '',
+      'companyPhone': '',
+      'logoPath': '',
+      'currency': '\$',
+      'defaultTaxRate': 0.0,
+      'invoicePrefix': 'INV-'
+    };
   }
 
-  Future<void> updateSettings(String name, String address, String phone) async {
+  // Updated to accept the new settings parameters
+  Future<void> updateSettings({
+    required String name,
+    required String address,
+    required String phone,
+    required String logoPath,
+    required String currency,
+    required double defaultTaxRate,
+    required String invoicePrefix,
+  }) async {
     final db = await instance.database;
     await db.update('settings', {
       'companyName': name,
       'companyAddress': address,
-      'companyPhone': phone
+      'companyPhone': phone,
+      'logoPath': logoPath,
+      'currency': currency,
+      'defaultTaxRate': defaultTaxRate,
+      'invoicePrefix': invoicePrefix,
     }, where: 'id = ?', whereArgs: [1]);
   }
 
@@ -89,6 +121,9 @@ class DBHelper {
   Future<void> insertInvoice(Invoice invoice) async {
     final db = await instance.database;
     await db.insert('invoices', invoice.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+
+    // --- NEW LINE ADDED HERE: Clears old items before saving new ones (crucial for Editing) ---
+    await db.delete('invoice_items', where: 'invoiceId = ?', whereArgs: [invoice.id]);
 
     for (var item in invoice.items) {
       await db.insert('invoice_items', item.toMap(invoice.id), conflictAlgorithm: ConflictAlgorithm.replace);
