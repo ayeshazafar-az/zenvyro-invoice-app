@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../services/invoice_provider.dart';
 import '../models/invoice_model.dart';
 import '../database/db_helper.dart';
+import '../services/notification_service.dart'; // Added Notification Import
 
 // --- HELPER CLASS ---
 class ItemInputGroup {
@@ -152,6 +153,14 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
       );
 
       provider.addInvoice(newInvoice);
+
+      // --- Trigger Notification ---
+      await NotificationService.scheduleNotification(
+        newInvoice.id,
+        newInvoice.customerName,
+        DateTime.parse(newInvoice.dueDate),
+      );
+
       if (mounted) Navigator.pop(context);
     }
   }

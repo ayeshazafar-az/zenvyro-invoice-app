@@ -1,12 +1,29 @@
-// main.dart
+// lib/main.dart
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/data/latest_all.dart' as tz;
+import 'package:timezone/timezone.dart' as tz;
 import 'services/invoice_provider.dart';
 import 'screens/dashboard_screen.dart';
 
-void main() {
+// Initialize the plugin
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 1. Initialize Timezones
+  tz.initializeTimeZones();
+
+  // 2. Initialize Notifications
+  const AndroidInitializationSettings initializationSettingsAndroid =
+  AndroidInitializationSettings('@mipmap/ic_launcher');
+  const InitializationSettings initializationSettings =
+  InitializationSettings(android: initializationSettingsAndroid);
+
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
   runApp(
     MultiProvider(
@@ -23,30 +40,14 @@ class InvoiceGeneratorApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Listen to the provider to get the theme preference
     return Consumer<InvoiceProvider>(
       builder: (context, provider, child) {
         return MaterialApp(
           title: 'Zenvyro Invoice Generator',
           debugShowCheckedModeBanner: false,
-
-          // Switch between Light and Dark based on the database value
           themeMode: provider.isDarkMode ? ThemeMode.dark : ThemeMode.light,
-
-          theme: ThemeData(
-            useMaterial3: true,
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: Colors.deepPurple,
-              brightness: Brightness.light,
-            ),
-          ),
-          darkTheme: ThemeData(
-            useMaterial3: true,
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: Colors.deepPurple,
-              brightness: Brightness.dark,
-            ),
-          ),
+          theme: ThemeData(useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple, brightness: Brightness.light)),
+          darkTheme: ThemeData(useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple, brightness: Brightness.dark)),
           home: const DashboardScreen(),
         );
       },

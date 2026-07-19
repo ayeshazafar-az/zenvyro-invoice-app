@@ -4,9 +4,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../database/db_helper.dart';
 import '../services/invoice_provider.dart';
-import '../services/backup_service.dart'; // Added for Backup/Restore
+import '../services/backup_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -91,7 +93,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  // --- NEW: Backup Data Action ---
   Future<void> _handleBackup() async {
     final success = await BackupService.backupDatabase();
     if (mounted) {
@@ -104,9 +105,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  // --- NEW: Restore Data Action ---
   Future<void> _handleRestore() async {
-    // 1. Show warning dialog
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -124,20 +123,60 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     if (confirm != true) return;
 
-    // 2. Proceed with restore
     final success = await BackupService.restoreDatabase();
     if (mounted) {
       if (success) {
-        // Force provider to reload everything from the newly restored database
         await Provider.of<InvoiceProvider>(context, listen: false).fetchInvoices();
-        await _loadSettings(); // Refresh UI fields
-
+        await _loadSettings();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Database restored successfully!'), backgroundColor: Colors.green),
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Restore canceled or failed.'), backgroundColor: Colors.orange),
+        );
+      }
+    }
+  }
+
+  // --- NEW: Export CSV Logic ---
+  Future<void> _exportToCSV() async {
+    try {
+      final provider = Provider.of<InvoiceProvider>(context, listen: false);
+      final invoices = provider.invoices;
+
+      if (invoices.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No invoices to export.'), backgroundColor: Colors.orange),
+          );
+        }
+        return;
+      }
+
+      // 1. Construct the CSV Header
+      String csvData = "Invoice ID,Customer Name,Date,Due Date,Status,Total Amount\n";
+
+      // 2. Loop through and add data rows
+      for (var invoice in invoices) {
+        // We use string interpolation and wrap strings in quotes to avoid comma breaks
+        csvData += '"${invoice.id}","${invoice.customerName}","${invoice.date}","${invoice.dueDate}","${invoice.status}","${invoice.grandTotal.toStringAsFixed(2)}"\n';
+      }
+
+      // 3. Save the file temporarily
+      final directory = await getApplicationDocumentsDirectory();
+      final String filePath = '${directory.path}/zenvyro_invoices_export.csv';
+      final File file = File(filePath);
+      await file.writeAsString(csvData);
+
+      // 4. Share the file
+      final xFile = XFile(file.path);
+      await Share.shareXFiles([xFile], subject: 'Invoices Export CSV');
+
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Export failed: $e'), backgroundColor: Colors.red),
         );
       }
     }
@@ -234,7 +273,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 32),
 
-            // --- NEW: Data Management Section ---
             const Text('Data Management', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             Row(
@@ -257,6 +295,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ],
             ),
+            const SizedBox(height: 12),
+            // --- NEW: Added CSV Export Button ---
+            SizedBox(
+              width: double.infinity,
+              height: 45,
+              child: OutlinedButton.icon(
+                onPressed: _exportToCSV,
+                icon: const Icon(Icons.download),
+                label: const Text('Export Invoices as CSV'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Theme.of(context).colorScheme.primary,
+                  side: BorderSide(color: Theme.of(context).colorScheme.primary),
+                ),
+              ),
+            ),
             const SizedBox(height: 32),
 
             SizedBox(
@@ -267,7 +320,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: const Text('Save Settings', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ),
-            const SizedBox(height: 24), // Bottom padding
+            const SizedBox(height: 24),
           ],
         ),
       ),
