@@ -12,8 +12,8 @@ class DBHelper {
 
   Future<Database> get database async {
     if (_database != null) return _database!;
-    // Bumped to v3 to trigger a fresh schema generation with the new columns
-    _database = await _initDB('zenvyro_invoices_v3.db');
+    // Updated to version 8 to include isFavorite in customers table
+    _database = await _initDB('zenvyro_invoices_v8.db');
     return _database!;
   }
 
@@ -21,11 +21,24 @@ class DBHelper {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
 
-    return await openDatabase(path, version: 1, onCreate: _createDB);
+    return await openDatabase(
+        path,
+        version: 8,
+        onCreate: _createDB,
+        onUpgrade: (db, oldVersion, newVersion) async {
+          if (oldVersion < 8) {
+            await db.execute('DROP TABLE IF EXISTS settings');
+            await db.execute('DROP TABLE IF EXISTS invoice_items');
+            await db.execute('DROP TABLE IF EXISTS invoices');
+            await db.execute('DROP TABLE IF EXISTS customers');
+            await db.execute('DROP TABLE IF EXISTS products');
+            await _createDB(db, newVersion);
+          }
+        }
+    );
   }
 
   Future _createDB(Database db, int version) async {
-    // 1. Create Invoices Table (Added 'notes' column)
     await db.execute('''
       CREATE TABLE invoices (
         id TEXT PRIMARY KEY,
@@ -42,7 +55,6 @@ class DBHelper {
       )
     ''');
 
-    // 2. Create Items Table
     await db.execute('''
       CREATE TABLE invoice_items (
         id TEXT PRIMARY KEY,
@@ -55,7 +67,6 @@ class DBHelper {
       )
     ''');
 
-    // 3. Create Settings Table (Added logoPath, currency, defaultTaxRate, invoicePrefix)
     await db.execute('''
       CREATE TABLE settings (
         id INTEGER PRIMARY KEY,
@@ -65,36 +76,90 @@ class DBHelper {
         logoPath TEXT,
         currency TEXT,
         defaultTaxRate REAL,
-        invoicePrefix TEXT
+        invoicePrefix TEXT,
+        isDarkMode INTEGER DEFAULT 0,
+        selectedTemplate TEXT DEFAULT 'Simple'
       )
     ''');
 
-    // Seed default settings row with the new values
+    // --- NEW: Added isFavorite column to customers ---
     await db.execute('''
-      INSERT INTO settings (id, companyName, companyAddress, companyPhone, logoPath, currency, defaultTaxRate, invoicePrefix) 
-      VALUES (1, "My Company", "", "", "", "\$", 0.0, "INV-")
+      CREATE TABLE customers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT,
+        phone TEXT,
+        address TEXT,
+        isFavorite INTEGER DEFAULT 0
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        price REAL NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      INSERT INTO settings (id, companyName, companyAddress, companyPhone, logoPath, currency, defaultTaxRate, invoicePrefix, isDarkMode, selectedTemplate) 
+      VALUES (1, "My Company", "", "", "", "\$", 0.0, "INV-", 0, "Simple")
     ''');
   }
 
-  // --- SETTINGS CRUD ---
+  // --- PRODUCT CRUD ---
+  Future<List<Map<String, dynamic>>> getProducts() async {
+    final db = await instance.database;
+    return await db.query('products', orderBy: 'name ASC');
+  }
 
+  Future<void> insertProduct(String name, double price) async {
+    final db = await instance.database;
+    await db.insert('products', {'name': name, 'price': price}, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> deleteProduct(int id) async {
+    final db = await instance.database;
+    await db.delete('products', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // --- CUSTOMER CRUD ---
+  Future<List<Map<String, dynamic>>> getCustomers() async {
+    final db = await instance.database;
+    // --- NEW: Order by isFavorite first, then alphabetically ---
+    return await db.query('customers', orderBy: 'isFavorite DESC, name ASC');
+  }
+
+  Future<void> insertCustomer(String name, String email, String phone, String address, {int isFavorite = 0}) async {
+    final db = await instance.database;
+    await db.insert('customers', {
+      'name': name,
+      'email': email,
+      'phone': phone,
+      'address': address,
+      'isFavorite': isFavorite
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  // --- NEW: Method to toggle favorite status ---
+  Future<void> toggleCustomerFavorite(int id, int isFavorite) async {
+    final db = await instance.database;
+    await db.update('customers', {'isFavorite': isFavorite}, where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> deleteCustomer(int id) async {
+    final db = await instance.database;
+    await db.delete('customers', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // --- SETTINGS CRUD ---
   Future<Map<String, dynamic>> getSettings() async {
     final db = await instance.database;
     final res = await db.query('settings', where: 'id = ?', whereArgs: [1]);
-    return res.isNotEmpty
-        ? res.first
-        : {
-      'companyName': 'My Company',
-      'companyAddress': '',
-      'companyPhone': '',
-      'logoPath': '',
-      'currency': '\$',
-      'defaultTaxRate': 0.0,
-      'invoicePrefix': 'INV-'
-    };
+    return res.isNotEmpty ? res.first : {'companyName': 'My Company', 'currency': '\$', 'selectedTemplate': 'Simple'};
   }
 
-  // Updated to accept the new settings parameters
   Future<void> updateSettings({
     required String name,
     required String address,
@@ -103,6 +168,8 @@ class DBHelper {
     required String currency,
     required double defaultTaxRate,
     required String invoicePrefix,
+    required bool isDarkMode,
+    required String selectedTemplate
   }) async {
     final db = await instance.database;
     await db.update('settings', {
@@ -113,18 +180,16 @@ class DBHelper {
       'currency': currency,
       'defaultTaxRate': defaultTaxRate,
       'invoicePrefix': invoicePrefix,
+      'isDarkMode': isDarkMode ? 1 : 0,
+      'selectedTemplate': selectedTemplate
     }, where: 'id = ?', whereArgs: [1]);
   }
 
   // --- INVOICE CRUD ---
-
   Future<void> insertInvoice(Invoice invoice) async {
     final db = await instance.database;
     await db.insert('invoices', invoice.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
-
-    // --- NEW LINE ADDED HERE: Clears old items before saving new ones (crucial for Editing) ---
     await db.delete('invoice_items', where: 'invoiceId = ?', whereArgs: [invoice.id]);
-
     for (var item in invoice.items) {
       await db.insert('invoice_items', item.toMap(invoice.id), conflictAlgorithm: ConflictAlgorithm.replace);
     }
@@ -133,14 +198,10 @@ class DBHelper {
   Future<List<Invoice>> getAllInvoices() async {
     final db = await instance.database;
     final invoiceMaps = await db.query('invoices', orderBy: 'date DESC');
-
     List<Invoice> invoices = [];
     for (var map in invoiceMaps) {
-      final String invoiceId = map['id'] as String;
-      final itemMaps = await db.query('invoice_items', where: 'invoiceId = ?', whereArgs: [invoiceId]);
-
-      List<InvoiceItem> items = itemMaps.map((itemMap) => InvoiceItem.fromMap(itemMap)).toList();
-      invoices.add(Invoice.fromMap(map, items));
+      final itemMaps = await db.query('invoice_items', where: 'invoiceId = ?', whereArgs: [map['id']]);
+      invoices.add(Invoice.fromMap(map, itemMaps.map((i) => InvoiceItem.fromMap(i)).toList()));
     }
     return invoices;
   }
@@ -153,5 +214,13 @@ class DBHelper {
   Future<void> updateInvoiceStatus(String id, String newStatus) async {
     final db = await instance.database;
     await db.update('invoices', {'status': newStatus}, where: 'id = ?', whereArgs: [id]);
+  }
+
+  // --- NEW: Added for Restore Functionality ---
+  Future<void> closeAndResetDatabase() async {
+    if (_database != null) {
+      await _database!.close();
+      _database = null;
+    }
   }
 }

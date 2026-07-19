@@ -7,6 +7,10 @@ import '../services/invoice_provider.dart';
 import 'create_invoice_screen.dart';
 import 'invoice_detail_screen.dart';
 import 'settings_screen.dart';
+import 'customer_list_screen.dart';
+import 'product_catalog_screen.dart';
+import 'monthly_summary_screen.dart';
+import 'revenue_chart_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -19,14 +23,48 @@ class DashboardScreen extends StatelessWidget {
         centerTitle: false,
         actions: [
           IconButton(
+            icon: const Icon(Icons.bar_chart),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const RevenueChartScreen()),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.analytics_outlined),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const MonthlySummaryScreen()),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.inventory),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const ProductCatalogScreen()),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.people),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const CustomerListScreen()),
+              );
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () async {
-              // Wait for user to return from settings
               await Navigator.push(
                 context,
                 MaterialPageRoute(builder: (context) => const SettingsScreen()),
               );
-              // Force the dashboard to refresh the currency symbol if they changed it
               if (context.mounted) {
                 Provider.of<InvoiceProvider>(context, listen: false).refreshSettings();
               }
@@ -34,7 +72,6 @@ class DashboardScreen extends StatelessWidget {
           )
         ],
       ),
-      // The Consumer widget listens to the Provider and redraws ONLY this section when data changes
       body: Consumer<InvoiceProvider>(
         builder: (context, provider, child) {
           if (provider.isLoading) {
@@ -45,7 +82,6 @@ class DashboardScreen extends StatelessWidget {
             return _buildEmptyState(context);
           }
 
-          // --- FIX: Dynamic Currency Formatter ---
           final currencyFormat = NumberFormat.currency(symbol: '${provider.currencySymbol} ', decimalDigits: 2);
 
           return CustomScrollView(
@@ -56,7 +92,6 @@ class DashboardScreen extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // --- Search Bar ---
                       TextField(
                         onChanged: (value) => Provider.of<InvoiceProvider>(context, listen: false).searchInvoices(value),
                         decoration: InputDecoration(
@@ -67,8 +102,6 @@ class DashboardScreen extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 16),
-
-                      // --- Summary Statistics ---
                       _buildSummaryCard(
                         context,
                         'Total Revenue',
@@ -100,7 +133,34 @@ class DashboardScreen extends StatelessWidget {
                           ),
                         ],
                       ),
+                      const SizedBox(height: 16),
+
+                      // --- NEW: Revenue Chart Card in Body ---
+                      Card(
+                        elevation: 2,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        child: ListTile(
+                          leading: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(Icons.bar_chart, color: Theme.of(context).colorScheme.primary),
+                          ),
+                          title: const Text('View Revenue Charts', style: TextStyle(fontWeight: FontWeight.bold)),
+                          subtitle: const Text('Analyze your monthly income trends'),
+                          trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (context) => const RevenueChartScreen()),
+                            );
+                          },
+                        ),
+                      ),
                       const SizedBox(height: 24),
+
                       const Text(
                         'Recent Invoices',
                         style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
@@ -109,7 +169,6 @@ class DashboardScreen extends StatelessWidget {
                   ),
                 ),
               ),
-              // --- Invoice List ---
               SliverList(
                 delegate: SliverChildBuilderDelegate(
                       (context, index) {
@@ -156,7 +215,6 @@ class DashboardScreen extends StatelessWidget {
           );
         },
       ),
-
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
           Navigator.push(
@@ -172,15 +230,10 @@ class DashboardScreen extends StatelessWidget {
     );
   }
 
-  // --- Helper Widgets ---
-
   Widget _buildSummaryCard(BuildContext context, String title, String value, Color bgColor, Color textColor) {
     return Container(
       padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(16),
-      ),
+      decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(16)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

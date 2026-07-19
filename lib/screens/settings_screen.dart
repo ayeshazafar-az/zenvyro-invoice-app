@@ -3,7 +3,10 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:provider/provider.dart';
 import '../database/db_helper.dart';
+import '../services/invoice_provider.dart';
+import '../services/backup_service.dart'; // Added for Backup/Restore
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -13,18 +16,19 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  // Controllers
   final _nameController = TextEditingController();
   final _addressController = TextEditingController();
   final _phoneController = TextEditingController();
   final _prefixController = TextEditingController();
   final _taxRateController = TextEditingController();
 
-  // State Variables
   String _currency = '\$';
   String _logoPath = '';
+  bool _isDarkMode = false;
+  String _selectedTemplate = 'Simple';
 
   final List<String> _currencies = ['\$', '€', '£', 'Rs', '¥'];
+  final List<String> _templates = ['Simple', 'Branded'];
 
   @override
   void initState() {
@@ -41,19 +45,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _prefixController.text = settings['invoicePrefix'] ?? 'INV-';
       _taxRateController.text = (settings['defaultTaxRate'] ?? 0.0).toString();
 
-      // Ensure the saved currency exists in our list, otherwise default to $
       _currency = _currencies.contains(settings['currency'])
           ? settings['currency']
           : '\$';
 
       _logoPath = settings['logoPath'] ?? '';
+      _isDarkMode = (settings['isDarkMode'] ?? 0) == 1;
+      _selectedTemplate = settings['selectedTemplate'] ?? 'Simple';
     });
   }
 
   Future<void> _pickLogo() async {
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.gallery);
-
     if (pickedFile != null) {
       setState(() {
         _logoPath = pickedFile.path;
@@ -62,6 +66,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _saveSettings() async {
+    final provider = Provider.of<InvoiceProvider>(context, listen: false);
+
+    await provider.toggleTheme(_isDarkMode);
+    await provider.updateTemplate(_selectedTemplate);
+
     await DBHelper.instance.updateSettings(
       name: _nameController.text.trim(),
       address: _addressController.text.trim(),
@@ -70,6 +79,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       currency: _currency,
       defaultTaxRate: double.tryParse(_taxRateController.text) ?? 0.0,
       invoicePrefix: _prefixController.text.trim(),
+      isDarkMode: _isDarkMode,
+      selectedTemplate: _selectedTemplate,
     );
 
     if (mounted) {
@@ -77,6 +88,58 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SnackBar(content: Text('Settings Saved Successfully!')),
       );
       Navigator.pop(context);
+    }
+  }
+
+  // --- NEW: Backup Data Action ---
+  Future<void> _handleBackup() async {
+    final success = await BackupService.backupDatabase();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(success ? 'Preparing backup file...' : 'Failed to create backup.'),
+          backgroundColor: success ? Colors.green : Colors.red,
+        ),
+      );
+    }
+  }
+
+  // --- NEW: Restore Data Action ---
+  Future<void> _handleRestore() async {
+    // 1. Show warning dialog
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Restore Database'),
+        content: const Text('Warning: This will overwrite all your current invoices and settings with the selected backup file. This cannot be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('CANCEL')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('RESTORE', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    // 2. Proceed with restore
+    final success = await BackupService.restoreDatabase();
+    if (mounted) {
+      if (success) {
+        // Force provider to reload everything from the newly restored database
+        await Provider.of<InvoiceProvider>(context, listen: false).fetchInvoices();
+        await _loadSettings(); // Refresh UI fields
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Database restored successfully!'), backgroundColor: Colors.green),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Restore canceled or failed.'), backgroundColor: Colors.orange),
+        );
+      }
     }
   }
 
@@ -99,15 +162,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // --- LOGO UPLOAD ---
             Center(
               child: Column(
                 children: [
                   CircleAvatar(
                     radius: 50,
                     backgroundColor: Colors.grey.shade300,
-                    backgroundImage: _logoPath.isNotEmpty ? FileImage(File(_logoPath)) : null,
-                    child: _logoPath.isEmpty
+                    backgroundImage: (_logoPath.isNotEmpty && File(_logoPath).existsSync())
+                        ? FileImage(File(_logoPath))
+                        : null,
+                    child: (_logoPath.isEmpty || !File(_logoPath).existsSync())
                         ? const Icon(Icons.business, size: 50, color: Colors.grey)
                         : null,
                   ),
@@ -121,75 +185,80 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 24),
 
-            // --- COMPANY DETAILS ---
-            const Text('Company Details', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _nameController,
-              decoration: const InputDecoration(labelText: 'Company Name', border: OutlineInputBorder()),
+            const Text('Appearance', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            SwitchListTile(
+              title: const Text('Dark Mode'),
+              value: _isDarkMode,
+              onChanged: (val) => setState(() => _isDarkMode = val),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _addressController,
-              decoration: const InputDecoration(labelText: 'Address', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _phoneController,
-              decoration: const InputDecoration(labelText: 'Phone', border: OutlineInputBorder()),
+            DropdownButtonFormField<String>(
+              value: _selectedTemplate,
+              decoration: const InputDecoration(labelText: 'Invoice Template', border: OutlineInputBorder()),
+              items: _templates.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
+              onChanged: (val) => setState(() => _selectedTemplate = val!),
             ),
             const SizedBox(height: 24),
 
-            // --- INVOICE PREFERENCES ---
+            const Text('Company Details', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            TextField(controller: _nameController, decoration: const InputDecoration(labelText: 'Company Name', border: OutlineInputBorder())),
+            const SizedBox(height: 12),
+            TextField(controller: _addressController, decoration: const InputDecoration(labelText: 'Address', border: OutlineInputBorder())),
+            const SizedBox(height: 12),
+            TextField(controller: _phoneController, decoration: const InputDecoration(labelText: 'Phone', border: OutlineInputBorder())),
+            const SizedBox(height: 24),
+
             const Text('Invoice Preferences', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
-
             Row(
               children: [
                 Expanded(
-                  child: TextField(
-                    controller: _prefixController,
-                    decoration: const InputDecoration(
-                        labelText: 'Invoice Prefix',
-                        hintText: 'e.g. INV-',
-                        border: OutlineInputBorder()
-                    ),
-                  ),
+                  child: TextField(controller: _prefixController, decoration: const InputDecoration(labelText: 'Invoice Prefix', border: OutlineInputBorder())),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: DropdownButtonFormField<String>(
                     value: _currency,
                     decoration: const InputDecoration(labelText: 'Currency', border: OutlineInputBorder()),
-                    items: _currencies.map((String value) {
-                      return DropdownMenuItem<String>(
-                        value: value,
-                        child: Text(value),
-                      );
-                    }).toList(),
-                    onChanged: (newValue) {
-                      setState(() {
-                        _currency = newValue!;
-                      });
-                    },
+                    items: _currencies.map((value) => DropdownMenuItem(value: value, child: Text(value))).toList(),
+                    onChanged: (val) => setState(() => _currency = val!),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 12),
-
             TextField(
               controller: _taxRateController,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                  labelText: 'Default Tax Rate (%)',
-                  border: OutlineInputBorder(),
-                  suffixText: '%'
-              ),
+              decoration: const InputDecoration(labelText: 'Default Tax Rate (%)', border: OutlineInputBorder(), suffixText: '%'),
             ),
             const SizedBox(height: 32),
 
-            // --- SAVE BUTTON ---
+            // --- NEW: Data Management Section ---
+            const Text('Data Management', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _handleBackup,
+                    icon: const Icon(Icons.backup),
+                    label: const Text('Backup'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _handleRestore,
+                    icon: const Icon(Icons.restore),
+                    label: const Text('Restore'),
+                    style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 32),
+
             SizedBox(
               width: double.infinity,
               height: 50,
@@ -197,7 +266,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onPressed: _saveSettings,
                 child: const Text('Save Settings', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
-            )
+            ),
+            const SizedBox(height: 24), // Bottom padding
           ],
         ),
       ),

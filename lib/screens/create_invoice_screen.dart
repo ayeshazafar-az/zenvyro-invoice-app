@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../services/invoice_provider.dart';
 import '../models/invoice_model.dart';
-import '../database/db_helper.dart'; // Added to fetch settings
+import '../database/db_helper.dart';
 
 // --- HELPER CLASS ---
 class ItemInputGroup {
@@ -35,21 +35,16 @@ class CreateInvoiceScreen extends StatefulWidget {
 class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
   final _formKey = GlobalKey<FormState>();
 
-  // Customer Info Controllers
   final _customerNameController = TextEditingController();
   final _customerEmailController = TextEditingController();
   final _customerPhoneController = TextEditingController();
   final _customerAddressController = TextEditingController();
 
-  // Tax & Notes Controllers
   final _taxRateController = TextEditingController(text: '0');
-  final _notesController = TextEditingController(); // NEW: Notes Controller
+  final _notesController = TextEditingController();
 
-  // Date Variables
   DateTime _invoiceDate = DateTime.now();
   DateTime _dueDate = DateTime.now().add(const Duration(days: 7));
-
-  // Settings Variable
   String _invoicePrefix = 'INV-';
 
   final List<ItemInputGroup> _items = [];
@@ -63,8 +58,10 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
   }
 
   Future<void> _initializeData() async {
+    final settings = await DBHelper.instance.getSettings();
+    setState(() => _invoicePrefix = settings['invoicePrefix'] ?? 'INV-');
+
     if (widget.existingInvoice != null) {
-      // --- POPULATE FOR EDIT OR DUPLICATE ---
       final inv = widget.existingInvoice!;
       _customerNameController.text = inv.customerName;
       _customerEmailController.text = inv.customerEmail;
@@ -88,30 +85,23 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
       }
       setState(() {});
     } else {
-      // --- NEW INVOICE: LOAD DEFAULT SETTINGS ---
-      final settings = await DBHelper.instance.getSettings();
-      setState(() {
-        _taxRateController.text = (settings['defaultTaxRate'] ?? 0.0).toString();
-        _invoicePrefix = settings['invoicePrefix'] ?? 'INV-';
-        _items.add(ItemInputGroup());
-      });
+      _taxRateController.text = (settings['defaultTaxRate'] ?? 0.0).toString();
+      _items.add(ItemInputGroup());
     }
   }
 
-  void _addNewItemRow() {
+  void _fillCustomerDetails(Map<String, dynamic> customer) {
     setState(() {
-      _items.add(ItemInputGroup());
+      _customerNameController.text = customer['name'];
+      _customerEmailController.text = customer['email'] ?? '';
+      _customerPhoneController.text = customer['phone'] ?? '';
+      _customerAddressController.text = customer['address'] ?? '';
     });
   }
 
-  void _removeItemRow(int index) {
-    setState(() {
-      _items[index].dispose();
-      _items.removeAt(index);
-    });
-  }
+  void _addNewItemRow() => setState(() => _items.add(ItemInputGroup()));
+  void _removeItemRow(int index) => setState(() { _items[index].dispose(); _items.removeAt(index); });
 
-  // --- LIVE CALCULATIONS ---
   double get _subtotal {
     double total = 0;
     for (var item in _items) {
@@ -123,38 +113,121 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
     return total;
   }
 
-  double get _taxAmount {
-    double taxRate = double.tryParse(_taxRateController.text) ?? 0;
-    return _subtotal * (taxRate / 100);
-  }
+  double get _taxAmount => _subtotal * ((double.tryParse(_taxRateController.text) ?? 0) / 100);
+  double get _grandTotal => _subtotal + _taxAmount;
 
-  double get _grandTotal {
-    return _subtotal + _taxAmount;
-  }
+  void _saveInvoice() async {
+    if (_formKey.currentState!.validate()) {
+      if (_items.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Add at least one item.')));
+        return;
+      }
 
-  // --- DATE PICKER LOGIC ---
-  Future<void> _selectInvoiceDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _invoiceDate,
-      firstDate: DateTime(2000),
-      lastDate: DateTime(2100),
-    );
-    if (picked != null) {
-      setState(() => _invoiceDate = picked);
+      final provider = Provider.of<InvoiceProvider>(context, listen: false);
+
+      final isExisting = provider.customers.any((c) => c['name'] == _customerNameController.text);
+      if (!isExisting && _customerNameController.text.isNotEmpty) {
+        await provider.addCustomer(_customerNameController.text, _customerEmailController.text, _customerPhoneController.text, _customerAddressController.text);
+      }
+
+      final newInvoice = Invoice(
+        id: isEditMode ? widget.existingInvoice!.id : '$_invoicePrefix${DateTime.now().millisecondsSinceEpoch.toString().substring(8)}',
+        companyName: (await DBHelper.instance.getSettings())['companyName'] ?? 'My Company',
+        customerName: _customerNameController.text,
+        customerEmail: _customerEmailController.text,
+        customerPhone: _customerPhoneController.text,
+        customerAddress: _customerAddressController.text,
+        date: DateFormat('yyyy-MM-dd').format(_invoiceDate),
+        dueDate: DateFormat('yyyy-MM-dd').format(_dueDate),
+        status: isEditMode ? widget.existingInvoice!.status : 'Unpaid',
+        taxRate: double.tryParse(_taxRateController.text) ?? 0.0,
+        notes: _notesController.text,
+        items: _items.map((g) => InvoiceItem(
+          id: 'ITEM-${DateTime.now().microsecondsSinceEpoch}',
+          name: g.nameController.text,
+          quantity: int.tryParse(g.qtyController.text) ?? 1,
+          unitPrice: double.tryParse(g.priceController.text) ?? 0.0,
+          discount: double.tryParse(g.discountController.text) ?? 0.0,
+        )).toList(),
+      );
+
+      provider.addInvoice(newInvoice);
+      if (mounted) Navigator.pop(context);
     }
   }
 
-  Future<void> _selectDueDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _dueDate,
-      firstDate: DateTime(2000),
-      lastDate: DateTime(2100),
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(isEditMode ? 'Edit Invoice' : 'Create Invoice')),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Consumer<InvoiceProvider>(builder: (context, provider, _) {
+                return DropdownButtonFormField<Map<String, dynamic>>(
+                  decoration: const InputDecoration(labelText: 'Select from History', border: OutlineInputBorder()),
+                  items: provider.customers.map((c) => DropdownMenuItem(value: c, child: Text(c['name']))).toList(),
+                  onChanged: (val) => val != null ? _fillCustomerDetails(val) : null,
+                );
+              }),
+              const SizedBox(height: 16),
+              TextFormField(controller: _customerNameController, decoration: const InputDecoration(labelText: 'Customer Name *', border: OutlineInputBorder())),
+              const SizedBox(height: 12),
+              TextFormField(controller: _customerEmailController, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
+              const SizedBox(height: 12),
+              TextFormField(controller: _customerPhoneController, decoration: const InputDecoration(labelText: 'Phone', border: OutlineInputBorder())),
+              const SizedBox(height: 12),
+              TextFormField(controller: _customerAddressController, maxLines: 2, decoration: const InputDecoration(labelText: 'Address', border: OutlineInputBorder())),
+
+              const SizedBox(height: 24),
+              const Text('Products', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              ..._items.asMap().entries.map((e) => Card(
+                  child: Padding(padding: const EdgeInsets.all(8), child: Column(children: [
+                    Row(children: [
+                      Expanded(
+                        child: TextFormField(controller: e.value.nameController, decoration: const InputDecoration(labelText: 'Item Name *')),
+                      ),
+                      Consumer<InvoiceProvider>(builder: (context, provider, _) {
+                        return PopupMenuButton<Map<String, dynamic>>(
+                          icon: const Icon(Icons.list, color: Colors.blue),
+                          onSelected: (prod) => setState(() {
+                            e.value.nameController.text = prod['name'];
+                            e.value.priceController.text = prod['price'].toString();
+                          }),
+                          itemBuilder: (context) => provider.products.map((prod) =>
+                              PopupMenuItem(value: prod, child: Text('${prod['name']} (\$${prod['price']})'))
+                          ).toList(),
+                        );
+                      }),
+                      IconButton(icon: const Icon(Icons.delete), onPressed: () => _removeItemRow(e.key))
+                    ]),
+                    Row(children: [
+                      Expanded(child: TextFormField(controller: e.value.qtyController, decoration: const InputDecoration(labelText: 'Qty'), onChanged: (v) => setState(() {}))),
+                      Expanded(child: TextFormField(controller: e.value.priceController, decoration: const InputDecoration(labelText: 'Price'), onChanged: (v) => setState(() {}))),
+                      Expanded(child: TextFormField(controller: e.value.discountController, decoration: const InputDecoration(labelText: 'Discount'), onChanged: (v) => setState(() {}))),
+                    ])
+                  ]))
+              )),
+              TextButton.icon(onPressed: _addNewItemRow, icon: const Icon(Icons.add), label: const Text('Add Item')),
+
+              const SizedBox(height: 20),
+              Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(children: [
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Subtotal'), Text('\$${_subtotal.toStringAsFixed(2)}')],),
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Tax (%)'), SizedBox(width: 50, child: TextFormField(controller: _taxRateController, onChanged: (v) => setState(() {})))],),
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Total'), Text('\$${_grandTotal.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18))],),
+              ]))),
+
+              const SizedBox(height: 20),
+              SizedBox(width: double.infinity, height: 50, child: ElevatedButton(onPressed: _saveInvoice, child: const Text('Save Invoice'))),
+            ],
+          ),
+        ),
+      ),
     );
-    if (picked != null) {
-      setState(() => _dueDate = picked);
-    }
   }
 
   @override
@@ -165,332 +238,7 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
     _customerAddressController.dispose();
     _taxRateController.dispose();
     _notesController.dispose();
-    for (var item in _items) {
-      item.dispose();
-    }
+    for (var i in _items) i.dispose();
     super.dispose();
-  }
-
-  void _saveInvoice() async {
-    // Validates all required fields
-    if (_formKey.currentState!.validate()) {
-      if (_items.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please add at least one item.', style: TextStyle(color: Colors.white)), backgroundColor: Colors.red),
-        );
-        return;
-      }
-
-      // Keep ID if editing, otherwise generate new ID with custom prefix
-      final String finalInvoiceId = isEditMode
-          ? widget.existingInvoice!.id
-          : '$_invoicePrefix${DateTime.now().millisecondsSinceEpoch.toString().substring(8)}';
-
-      final String formattedDate = DateFormat('yyyy-MM-dd').format(_invoiceDate);
-      final String formattedDueDate = DateFormat('yyyy-MM-dd').format(_dueDate);
-
-      List<InvoiceItem> finalItems = [];
-      for (var i = 0; i < _items.length; i++) {
-        final group = _items[i];
-        finalItems.add(
-            InvoiceItem(
-              id: 'ITEM-${DateTime.now().millisecondsSinceEpoch}-$i',
-              name: group.nameController.text,
-              quantity: int.tryParse(group.qtyController.text) ?? 1,
-              unitPrice: double.tryParse(group.priceController.text) ?? 0.0,
-              discount: double.tryParse(group.discountController.text) ?? 0.0,
-            )
-        );
-      }
-
-      // Fetch settings to inject dynamic company name
-      final settings = await DBHelper.instance.getSettings();
-
-      final newInvoice = Invoice(
-        id: finalInvoiceId,
-        companyName: settings['companyName'] ?? 'My Company',
-        customerName: _customerNameController.text,
-        customerEmail: _customerEmailController.text,
-        customerPhone: _customerPhoneController.text,
-        customerAddress: _customerAddressController.text,
-        date: formattedDate,
-        dueDate: formattedDueDate,
-        status: isEditMode ? widget.existingInvoice!.status : 'Unpaid',
-        taxRate: double.tryParse(_taxRateController.text) ?? 0.0,
-        notes: _notesController.text, // --- Saving Notes ---
-        items: finalItems,
-      );
-
-      Provider.of<InvoiceProvider>(context, listen: false).addInvoice(newInvoice);
-
-      if(mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(isEditMode ? 'Invoice Updated Successfully!' : 'Invoice Created Successfully!')),
-        );
-        Navigator.pop(context);
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(isEditMode ? 'Edit Invoice' : widget.isDuplicate ? 'Duplicate Invoice' : 'Create New Invoice', style: const TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: Theme.of(context).colorScheme.surface,
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // --- DATES ---
-              Row(
-                children: [
-                  Expanded(
-                    child: InkWell(
-                      onTap: _selectInvoiceDate,
-                      child: InputDecorator(
-                        decoration: InputDecoration(
-                          labelText: 'Invoice Date',
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                          prefixIcon: const Icon(Icons.calendar_today, size: 20),
-                        ),
-                        child: Text(DateFormat('yyyy-MM-dd').format(_invoiceDate)),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: InkWell(
-                      onTap: _selectDueDate,
-                      child: InputDecorator(
-                        decoration: InputDecoration(
-                          labelText: 'Due Date',
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                          prefixIcon: const Icon(Icons.event, size: 20),
-                        ),
-                        child: Text(DateFormat('yyyy-MM-dd').format(_dueDate)),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-
-              // --- CUSTOMER DETAILS ---
-              const Text('Customer Information', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _customerNameController,
-                decoration: InputDecoration(
-                  labelText: 'Customer Name *',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  prefixIcon: const Icon(Icons.person_outline),
-                ),
-                validator: (value) => value == null || value.trim().isEmpty ? 'Customer name is required' : null,
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _customerEmailController,
-                keyboardType: TextInputType.emailAddress,
-                decoration: InputDecoration(
-                  labelText: 'Email Address',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  prefixIcon: const Icon(Icons.email_outlined),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _customerPhoneController,
-                keyboardType: TextInputType.phone,
-                decoration: InputDecoration(
-                  labelText: 'Phone Number',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  prefixIcon: const Icon(Icons.phone_outlined),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _customerAddressController,
-                maxLines: 2,
-                decoration: InputDecoration(
-                  labelText: 'Billing Address',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  prefixIcon: const Icon(Icons.location_on_outlined),
-                ),
-              ),
-              const SizedBox(height: 32),
-
-              // --- DYNAMIC ITEMS LIST ---
-              const Text('Products / Services', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-              const SizedBox(height: 12),
-
-              ..._items.asMap().entries.map((entry) {
-                int index = entry.key;
-                ItemInputGroup itemGroup = entry.value;
-
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 16),
-                  elevation: 2,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  child: Padding(
-                    padding: const EdgeInsets.all(12.0),
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextFormField(
-                                controller: itemGroup.nameController,
-                                decoration: const InputDecoration(labelText: 'Item Name *', isDense: true),
-                                validator: (value) => value == null || value.trim().isEmpty ? 'Required' : null,
-                              ),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline, color: Colors.red),
-                              onPressed: () => _removeItemRow(index),
-                            )
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Expanded(
-                              flex: 2,
-                              child: TextFormField(
-                                controller: itemGroup.qtyController,
-                                keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(labelText: 'Qty *', isDense: true),
-                                onChanged: (value) => setState(() {}), // Triggers live calculation
-                                validator: (value) => value == null || int.tryParse(value) == null || int.parse(value) <= 0 ? 'Invalid' : null,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              flex: 3,
-                              child: TextFormField(
-                                controller: itemGroup.priceController,
-                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                decoration: const InputDecoration(labelText: 'Price *', isDense: true),
-                                onChanged: (value) => setState(() {}),
-                                validator: (value) => value == null || double.tryParse(value) == null ? 'Invalid' : null,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              flex: 3,
-                              child: TextFormField(
-                                controller: itemGroup.discountController,
-                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                decoration: const InputDecoration(labelText: 'Discount', isDense: true),
-                                onChanged: (value) => setState(() {}),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              }),
-
-              TextButton.icon(
-                onPressed: _addNewItemRow,
-                icon: const Icon(Icons.add_circle_outline),
-                label: const Text('Add Another Item'),
-                style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.primary),
-              ),
-              const SizedBox(height: 24),
-
-              // --- NOTES SECTION ---
-              const Text('Notes & Payment Instructions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _notesController,
-                maxLines: 3,
-                decoration: InputDecoration(
-                  hintText: 'e.g., Thank you for your business! Please make checks payable to...',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              // --- SUMMARY & TAX ---
-              Card(
-                color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Subtotal:', style: TextStyle(fontSize: 16)),
-                          Text('\$${_subtotal.toStringAsFixed(2)}', style: const TextStyle(fontSize: 16)),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Tax Rate (%):', style: TextStyle(fontSize: 16)),
-                          SizedBox(
-                            width: 80,
-                            child: TextFormField(
-                              controller: _taxRateController,
-                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                              textAlign: TextAlign.right,
-                              decoration: const InputDecoration(isDense: true, border: UnderlineInputBorder()),
-                              onChanged: (value) => setState(() {}),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Tax Amount:', style: TextStyle(fontSize: 16)),
-                          Text('\$${_taxAmount.toStringAsFixed(2)}', style: const TextStyle(fontSize: 16)),
-                        ],
-                      ),
-                      const Divider(height: 24),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Grand Total:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                          Text('\$${_grandTotal.toStringAsFixed(2)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 32),
-
-              // --- SAVE BUTTON ---
-              SizedBox(
-                width: double.infinity,
-                height: 55,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Theme.of(context).colorScheme.primary,
-                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  onPressed: _saveInvoice,
-                  child: Text(isEditMode ? 'Update Invoice' : 'Save Invoice', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                ),
-              ),
-              const SizedBox(height: 20),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }

@@ -6,10 +6,11 @@ import 'package:provider/provider.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:printing/printing.dart';
+import 'package:qr_flutter/qr_flutter.dart'; // NEW: Imported to show QR code
 
 import '../models/invoice_model.dart';
 import '../services/invoice_provider.dart';
-import '../pdf/pdf_invoice_api.dart';
+import '../utils/pdf_generator.dart';
 import '../database/db_helper.dart';
 import 'create_invoice_screen.dart';
 
@@ -20,6 +21,8 @@ class InvoiceDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final provider = Provider.of<InvoiceProvider>(context, listen: false);
+
     return FutureBuilder<Map<String, dynamic>>(
       future: DBHelper.instance.getSettings(),
       builder: (context, snapshot) {
@@ -32,15 +35,14 @@ class InvoiceDetailScreen extends StatelessWidget {
               IconButton(
                 icon: const Icon(Icons.picture_as_pdf, color: Colors.blueAccent),
                 onPressed: () async {
-                  final pdfBytes = await PdfInvoiceApi.generate(invoice);
-                  await Printing.layoutPdf(onLayout: (format) => pdfBytes);
+                  await PdfGenerator.generateAndPrint(invoice, provider.selectedTemplate);
                 },
               ),
               IconButton(
                 icon: const Icon(Icons.download, color: Colors.orangeAccent),
                 onPressed: () async {
                   try {
-                    final pdfBytes = await PdfInvoiceApi.generate(invoice);
+                    final pdfBytes = await PdfGenerator.generate(invoice, provider.selectedTemplate);
                     Directory? directory = Platform.isAndroid
                         ? await getExternalStorageDirectory()
                         : await getApplicationDocumentsDirectory();
@@ -59,7 +61,7 @@ class InvoiceDetailScreen extends StatelessWidget {
               IconButton(
                 icon: const Icon(Icons.share, color: Colors.greenAccent),
                 onPressed: () async {
-                  final pdfBytes = await PdfInvoiceApi.generate(invoice);
+                  final pdfBytes = await PdfGenerator.generate(invoice, provider.selectedTemplate);
                   final output = await getTemporaryDirectory();
                   final file = File('${output.path}/Invoice_${invoice.id}.pdf');
                   await file.writeAsBytes(pdfBytes);
@@ -104,27 +106,12 @@ class InvoiceDetailScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 16),
-
-                // --- IMPROVED CUSTOMER DETAILS ---
                 Text('Customer Details', style: Theme.of(context).textTheme.titleLarge),
-                ListTile(
-                  title: const Text('Name', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  subtitle: Text(invoice.customerName, style: const TextStyle(fontSize: 16)),
-                ),
-                ListTile(
-                  title: const Text('Email', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  subtitle: Text(invoice.customerEmail.isNotEmpty ? invoice.customerEmail : 'N/A', style: const TextStyle(fontSize: 16)),
-                ),
-                ListTile(
-                  title: const Text('Phone', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  subtitle: Text(invoice.customerPhone.isNotEmpty ? invoice.customerPhone : 'N/A', style: const TextStyle(fontSize: 16)),
-                ),
-                ListTile(
-                  title: const Text('Address', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  subtitle: Text(invoice.customerAddress.isNotEmpty ? invoice.customerAddress : 'N/A', style: const TextStyle(fontSize: 16)),
-                ),
+                ListTile(title: const Text('Name', style: TextStyle(fontSize: 12, color: Colors.grey)), subtitle: Text(invoice.customerName, style: const TextStyle(fontSize: 16))),
+                ListTile(title: const Text('Email', style: TextStyle(fontSize: 12, color: Colors.grey)), subtitle: Text(invoice.customerEmail.isNotEmpty ? invoice.customerEmail : 'N/A', style: const TextStyle(fontSize: 16))),
+                ListTile(title: const Text('Phone', style: TextStyle(fontSize: 12, color: Colors.grey)), subtitle: Text(invoice.customerPhone.isNotEmpty ? invoice.customerPhone : 'N/A', style: const TextStyle(fontSize: 16))),
+                ListTile(title: const Text('Address', style: TextStyle(fontSize: 12, color: Colors.grey)), subtitle: Text(invoice.customerAddress.isNotEmpty ? invoice.customerAddress : 'N/A', style: const TextStyle(fontSize: 16))),
                 const Divider(),
-
                 Text('Items', style: Theme.of(context).textTheme.titleLarge),
                 ...invoice.items.map((item) => ListTile(
                   title: Text(item.name),
@@ -137,6 +124,24 @@ class InvoiceDetailScreen extends StatelessWidget {
                   trailing: Text('$currency${invoice.grandTotal.toStringAsFixed(2)}',
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
                 ),
+
+                // --- NEW: QR Code Display UI ---
+                const SizedBox(height: 30),
+                Center(
+                  child: Column(
+                    children: [
+                      const Text('Scan to Pay', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey)),
+                      const SizedBox(height: 8),
+                      QrImageView(
+                        data: "https://paypal.me/yourusername/${invoice.grandTotal}",
+                        version: QrVersions.auto,
+                        size: 150.0,
+                        backgroundColor: Colors.white,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 40),
               ],
             ),
           ),
