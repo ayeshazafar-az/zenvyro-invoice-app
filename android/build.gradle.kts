@@ -15,6 +15,16 @@ subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
+
+// 1. MASTER SWITCH MUST GO HERE BEFORE THE EVALUATION COMMAND
+subprojects {
+    afterEvaluate {
+        val androidExtension = extensions.findByName("android") as? com.android.build.gradle.BaseExtension
+        androidExtension?.compileSdkVersion(36)
+    }
+}
+
+// 2. EVALUATION COMMAND GOES LAST
 subprojects {
     project.evaluationDependsOn(":app")
 }

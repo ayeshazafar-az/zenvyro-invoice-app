@@ -23,7 +23,10 @@ Future<void> main() async {
   const InitializationSettings initializationSettings =
   InitializationSettings(android: initializationSettingsAndroid);
 
-  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+  // UPDATED: Now using the named parameter `settings:`
+  await flutterLocalNotificationsPlugin.initialize(
+    settings: initializationSettings,
+  );
 
   runApp(
     MultiProvider(
@@ -46,8 +49,14 @@ class InvoiceGeneratorApp extends StatelessWidget {
           title: 'Zenvyro Invoice Generator',
           debugShowCheckedModeBanner: false,
           themeMode: provider.isDarkMode ? ThemeMode.dark : ThemeMode.light,
-          theme: ThemeData(useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple, brightness: Brightness.light)),
-          darkTheme: ThemeData(useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple, brightness: Brightness.dark)),
+          theme: ThemeData(
+            useMaterial3: true,
+            colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple, brightness: Brightness.light),
+          ),
+          darkTheme: ThemeData(
+            useMaterial3: true,
+            colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple, brightness: Brightness.dark),
+          ),
           home: const DashboardScreen(),
         );
       },

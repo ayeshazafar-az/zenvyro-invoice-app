@@ -10,7 +10,7 @@ import 'package:qr_flutter/qr_flutter.dart'; // NEW: Imported to show QR code
 
 import '../models/invoice_model.dart';
 import '../services/invoice_provider.dart';
-import '../utils/pdf_generator.dart';
+import '../pdf/pdf_generator.dart';
 import '../database/db_helper.dart';
 import 'create_invoice_screen.dart';
 

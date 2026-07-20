@@ -28,11 +28,11 @@ class InvoiceItem {
 
   factory InvoiceItem.fromMap(Map<String, dynamic> map) {
     return InvoiceItem(
-      id: map['id'],
-      name: map['name'],
-      quantity: map['quantity'],
-      unitPrice: map['unitPrice'],
-      discount: map['discount'],
+      id: map['id']?.toString() ?? '',
+      name: map['name']?.toString() ?? '',
+      quantity: (map['quantity'] as num?)?.toInt() ?? 0,
+      unitPrice: (map['unitPrice'] as num?)?.toDouble() ?? 0.0,
+      discount: (map['discount'] as num?)?.toDouble() ?? 0.0,
     );
   }
 }
@@ -46,9 +46,9 @@ class Invoice {
   final String customerAddress;
   final String date;
   final String dueDate;
-  final String status;
+  final String _status; // Raw status stored in DB
   final double taxRate;
-  final String notes; // --- ADDED FOR NOTES & INSTRUCTIONS ---
+  final String notes;
   List<InvoiceItem> items;
 
   Invoice({
@@ -60,15 +60,32 @@ class Invoice {
     required this.customerAddress,
     required this.date,
     required this.dueDate,
-    required this.status,
+    required String status,
     required this.taxRate,
-    required this.notes, // --- ADDED TO CONSTRUCTOR ---
+    required this.notes,
     required this.items,
-  });
+  }) : _status = status;
 
   double get subtotal => items.fold(0, (sum, item) => sum + item.total);
   double get taxAmount => subtotal * (taxRate / 100);
   double get grandTotal => subtotal + taxAmount;
+
+  // Dynamic getter: Automatically evaluates to 'Overdue' if due date is today or past (and not Paid)
+  String get status {
+    if (_status == 'Paid') return 'Paid';
+    try {
+      if (dueDate.isNotEmpty) {
+        final due = DateTime.parse(dueDate);
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+        final dueDay = DateTime(due.year, due.month, due.day);
+        if (today.compareTo(dueDay) >= 0) {
+          return 'Overdue';
+        }
+      }
+    } catch (_) {}
+    return _status;
+  }
 
   Map<String, dynamic> toMap() => {
     'id': id,
@@ -81,22 +98,22 @@ class Invoice {
     'dueDate': dueDate,
     'status': status,
     'taxRate': taxRate,
-    'notes': notes, // --- ADDED TO MAP ---
+    'notes': notes,
   };
 
   factory Invoice.fromMap(Map<String, dynamic> map, List<InvoiceItem> items) {
     return Invoice(
-      id: map['id'],
-      companyName: map['companyName'],
-      customerName: map['customerName'],
-      customerEmail: map['customerEmail'] ?? '',
-      customerPhone: map['customerPhone'] ?? '',
-      customerAddress: map['customerAddress'] ?? '',
-      date: map['date'],
-      dueDate: map['dueDate'],
-      status: map['status'],
-      taxRate: map['taxRate'],
-      notes: map['notes'] ?? '', // --- RETRIEVED FROM MAP ---
+      id: map['id']?.toString() ?? '',
+      companyName: map['companyName']?.toString() ?? '',
+      customerName: map['customerName']?.toString() ?? '',
+      customerEmail: map['customerEmail']?.toString() ?? '',
+      customerPhone: map['customerPhone']?.toString() ?? '',
+      customerAddress: map['customerAddress']?.toString() ?? '',
+      date: map['date']?.toString() ?? '',
+      dueDate: map['dueDate']?.toString() ?? '',
+      status: map['status']?.toString() ?? 'Unpaid',
+      taxRate: (map['taxRate'] as num?)?.toDouble() ?? 0.0,
+      notes: map['notes']?.toString() ?? '',
       items: items,
     );
   }

@@ -16,11 +16,11 @@ class NotificationService {
     );
 
     await flutterLocalNotificationsPlugin.zonedSchedule(
-      invoiceId.hashCode, // Unique ID for each notification
-      'Invoice Due Today!',
-      'Reminder: Invoice for $customerName is due today.',
-      scheduledDate,
-      const NotificationDetails(
+      id: invoiceId.hashCode, // Unique ID for each notification
+      title: 'Invoice Due Today!',
+      body: 'Reminder: Invoice for $customerName is due today.',
+      scheduledDate: scheduledDate,
+      notificationDetails: const NotificationDetails(
         android: AndroidNotificationDetails(
           'invoice_channel',
           'Invoice Reminders',
@@ -29,7 +29,6 @@ class NotificationService {
         ),
       ),
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
     );
   }
 }

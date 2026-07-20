@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
-        android:label="zenvyro_invoice"
+        android:label="Invoice Generator"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

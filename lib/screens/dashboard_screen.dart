@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../services/invoice_provider.dart';
+import '../widgets/summary_card.dart';
 import 'create_invoice_screen.dart';
 import 'invoice_detail_screen.dart';
 import 'settings_screen.dart';
@@ -12,8 +13,15 @@ import 'product_catalog_screen.dart';
 import 'monthly_summary_screen.dart';
 import 'revenue_chart_screen.dart';
 
-class DashboardScreen extends StatelessWidget {
+class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
+
+  @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  String _selectedFilter = 'All';
 
   @override
   Widget build(BuildContext context) {
@@ -84,6 +92,14 @@ class DashboardScreen extends StatelessWidget {
 
           final currencyFormat = NumberFormat.currency(symbol: '${provider.currencySymbol} ', decimalDigits: 2);
 
+          // Apply status filter logic
+          var displayList = provider.filteredInvoices;
+          if (_selectedFilter != 'All') {
+            displayList = displayList.where((inv) {
+              return inv.status.toLowerCase() == _selectedFilter.toLowerCase();
+            }).toList();
+          }
+
           return CustomScrollView(
             slivers: [
               SliverToBoxAdapter(
@@ -102,40 +118,54 @@ class DashboardScreen extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 16),
-                      _buildSummaryCard(
-                        context,
-                        'Total Revenue',
-                        currencyFormat.format(provider.totalRevenue),
-                        Theme.of(context).colorScheme.primaryContainer,
-                        Theme.of(context).colorScheme.onPrimaryContainer,
+
+                      // --- NEW: 2x2 Grid using SummaryCard Widget ---
+                      Row(
+                        children: [
+                          Expanded(
+                            child: SummaryCard(
+                              title: 'Total Revenue',
+                              value: currencyFormat.format(provider.totalRevenue),
+                              bgColor: Theme.of(context).colorScheme.primaryContainer,
+                              textColor: Theme.of(context).colorScheme.onPrimaryContainer,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: SummaryCard(
+                              title: 'Total Invoices',
+                              value: provider.totalInvoices.toString(),
+                              bgColor: Colors.blue.shade100,
+                              textColor: Colors.blue.shade900,
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 12),
                       Row(
                         children: [
                           Expanded(
-                            child: _buildSummaryCard(
-                              context,
-                              'Paid',
-                              provider.paidInvoices.toString(),
-                              Colors.green.shade100,
-                              Colors.green.shade900,
+                            child: SummaryCard(
+                              title: 'Paid Invoices',
+                              value: provider.paidInvoices.toString(),
+                              bgColor: Colors.green.shade100,
+                              textColor: Colors.green.shade900,
                             ),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
-                            child: _buildSummaryCard(
-                              context,
-                              'Unpaid/Overdue',
-                              provider.unpaidInvoices.toString(),
-                              Colors.red.shade100,
-                              Colors.red.shade900,
+                            child: SummaryCard(
+                              title: 'Unpaid / Overdue',
+                              value: provider.unpaidInvoices.toString(),
+                              bgColor: Colors.red.shade100,
+                              textColor: Colors.red.shade900,
                             ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 16),
 
-                      // --- NEW: Revenue Chart Card in Body ---
+                      // --- Revenue Chart Card in Body ---
                       Card(
                         elevation: 2,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -159,27 +189,59 @@ class DashboardScreen extends StatelessWidget {
                           },
                         ),
                       ),
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 16),
+
+                      // --- Status Filter Chips Bar ---
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: ['All', 'Paid', 'Unpaid', 'Overdue'].map((filter) {
+                            final isSelected = _selectedFilter == filter;
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 8.0),
+                              child: ChoiceChip(
+                                label: Text(filter),
+                                selected: isSelected,
+                                onSelected: (selected) {
+                                  setState(() {
+                                    _selectedFilter = filter;
+                                  });
+                                },
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
 
                       const Text(
-                        'Recent Invoices',
+                        'Invoices',
                         style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                       ),
                     ],
                   ),
                 ),
               ),
-              SliverList(
+              displayList.isEmpty
+                  ? SliverToBoxAdapter(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 40.0),
+                    child: Text('No invoices found for "$_selectedFilter".', style: const TextStyle(color: Colors.grey)),
+                  ),
+                ),
+              )
+                  : SliverList(
                 delegate: SliverChildBuilderDelegate(
                       (context, index) {
-                    final invoice = provider.filteredInvoices[index];
+                    final invoice = displayList[index];
                     return ListTile(
                       leading: CircleAvatar(
                         backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
                         child: const Icon(Icons.receipt),
                       ),
                       title: Text(invoice.customerName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text('${invoice.id} • ${invoice.date}'),
+                      subtitle: Text('${invoice.id} • Due: ${invoice.dueDate}'),
                       trailing: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         crossAxisAlignment: CrossAxisAlignment.end,
@@ -191,7 +253,11 @@ class DashboardScreen extends StatelessWidget {
                           Text(
                             invoice.status,
                             style: TextStyle(
-                              color: invoice.status == 'Paid' ? Colors.green : Colors.red,
+                              color: invoice.status == 'Paid'
+                                  ? Colors.green
+                                  : invoice.status == 'Overdue'
+                                  ? Colors.red
+                                  : Colors.orange,
                               fontWeight: FontWeight.w600,
                               fontSize: 12,
                             ),
@@ -208,7 +274,7 @@ class DashboardScreen extends StatelessWidget {
                       },
                     );
                   },
-                  childCount: provider.filteredInvoices.length,
+                  childCount: displayList.length,
                 ),
               ),
             ],
@@ -226,21 +292,6 @@ class DashboardScreen extends StatelessWidget {
         },
         icon: const Icon(Icons.add),
         label: const Text('Create Invoice'),
-      ),
-    );
-  }
-
-  Widget _buildSummaryCard(BuildContext context, String title, String value, Color bgColor, Color textColor) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(16)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: TextStyle(color: textColor, fontWeight: FontWeight.w500)),
-          const SizedBox(height: 8),
-          Text(value, style: TextStyle(color: textColor, fontSize: 24, fontWeight: FontWeight.bold)),
-        ],
       ),
     );
   }

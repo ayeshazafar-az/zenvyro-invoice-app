@@ -12,8 +12,8 @@ class DBHelper {
 
   Future<Database> get database async {
     if (_database != null) return _database!;
-    // Updated to version 8 to include isFavorite in customers table
-    _database = await _initDB('zenvyro_invoices_v8.db');
+    // Bumped to version 10 to include Notes and new Company details
+    _database = await _initDB('zenvyro_invoices_v10.db');
     return _database!;
   }
 
@@ -23,10 +23,10 @@ class DBHelper {
 
     return await openDatabase(
         path,
-        version: 8,
+        version: 10,
         onCreate: _createDB,
         onUpgrade: (db, oldVersion, newVersion) async {
-          if (oldVersion < 8) {
+          if (oldVersion < 10) {
             await db.execute('DROP TABLE IF EXISTS settings');
             await db.execute('DROP TABLE IF EXISTS invoice_items');
             await db.execute('DROP TABLE IF EXISTS invoices');
@@ -51,7 +51,7 @@ class DBHelper {
         dueDate TEXT NOT NULL,
         status TEXT NOT NULL,
         taxRate REAL NOT NULL,
-        notes TEXT
+        notes TEXT 
       )
     ''');
 
@@ -71,8 +71,12 @@ class DBHelper {
       CREATE TABLE settings (
         id INTEGER PRIMARY KEY,
         companyName TEXT,
+        companyEmail TEXT,
         companyAddress TEXT,
         companyPhone TEXT,
+        companyTagline TEXT,     -- NEW
+        companyTaxNumber TEXT,   -- NEW
+        companyWebsite TEXT,     -- NEW
         logoPath TEXT,
         currency TEXT,
         defaultTaxRate REAL,
@@ -82,7 +86,6 @@ class DBHelper {
       )
     ''');
 
-    // --- NEW: Added isFavorite column to customers ---
     await db.execute('''
       CREATE TABLE customers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,9 +105,10 @@ class DBHelper {
       )
     ''');
 
+    // Updated INSERT statement with empty strings for the 3 new fields
     await db.execute('''
-      INSERT INTO settings (id, companyName, companyAddress, companyPhone, logoPath, currency, defaultTaxRate, invoicePrefix, isDarkMode, selectedTemplate) 
-      VALUES (1, "My Company", "", "", "", "\$", 0.0, "INV-", 0, "Simple")
+      INSERT INTO settings (id, companyName, companyEmail, companyAddress, companyPhone, companyTagline, companyTaxNumber, companyWebsite, logoPath, currency, defaultTaxRate, invoicePrefix, isDarkMode, selectedTemplate) 
+      VALUES (1, "My Company", "", "", "", "", "", "", "", "\$", 0.0, "INV-", 0, "Simple")
     ''');
   }
 
@@ -127,7 +131,6 @@ class DBHelper {
   // --- CUSTOMER CRUD ---
   Future<List<Map<String, dynamic>>> getCustomers() async {
     final db = await instance.database;
-    // --- NEW: Order by isFavorite first, then alphabetically ---
     return await db.query('customers', orderBy: 'isFavorite DESC, name ASC');
   }
 
@@ -142,7 +145,6 @@ class DBHelper {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  // --- NEW: Method to toggle favorite status ---
   Future<void> toggleCustomerFavorite(int id, int isFavorite) async {
     final db = await instance.database;
     await db.update('customers', {'isFavorite': isFavorite}, where: 'id = ?', whereArgs: [id]);
@@ -157,13 +159,18 @@ class DBHelper {
   Future<Map<String, dynamic>> getSettings() async {
     final db = await instance.database;
     final res = await db.query('settings', where: 'id = ?', whereArgs: [1]);
-    return res.isNotEmpty ? res.first : {'companyName': 'My Company', 'currency': '\$', 'selectedTemplate': 'Simple'};
+    return res.isNotEmpty ? res.first : {'companyName': 'My Company', 'companyEmail': '', 'currency': '\$', 'selectedTemplate': 'Simple'};
   }
 
+  // Updated with optional default values to avoid provider compilation errors
   Future<void> updateSettings({
     required String name,
+    required String email,
     required String address,
     required String phone,
+    String tagline = '',    // Optional with default
+    String taxNumber = '',  // Optional with default
+    String website = '',    // Optional with default
     required String logoPath,
     required String currency,
     required double defaultTaxRate,
@@ -174,8 +181,12 @@ class DBHelper {
     final db = await instance.database;
     await db.update('settings', {
       'companyName': name,
+      'companyEmail': email,
       'companyAddress': address,
       'companyPhone': phone,
+      'companyTagline': tagline,
+      'companyTaxNumber': taxNumber,
+      'companyWebsite': website,
       'logoPath': logoPath,
       'currency': currency,
       'defaultTaxRate': defaultTaxRate,
@@ -216,7 +227,6 @@ class DBHelper {
     await db.update('invoices', {'status': newStatus}, where: 'id = ?', whereArgs: [id]);
   }
 
-  // --- NEW: Added for Restore Functionality ---
   Future<void> closeAndResetDatabase() async {
     if (_database != null) {
       await _database!.close();

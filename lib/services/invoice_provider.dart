@@ -16,10 +16,12 @@ class InvoiceProvider with ChangeNotifier {
   String _currencySymbol = '\$';
   bool _isDarkMode = false;
   String _selectedTemplate = 'Simple';
+  String _companyEmail = '';
 
   String get currencySymbol => _currencySymbol;
   bool get isDarkMode => _isDarkMode;
   String get selectedTemplate => _selectedTemplate;
+  String get companyEmail => _companyEmail;
 
   List<Invoice> get invoices => _invoices;
   List<Map<String, dynamic>> get customers => _customers;
@@ -67,6 +69,30 @@ class InvoiceProvider with ChangeNotifier {
     notifyListeners();
 
     _invoices = await DBHelper.instance.getAllInvoices();
+
+    // --- AUTOMATIC OVERDUE CHECK ---
+    final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
+    for (int i = 0; i < _invoices.length; i++) {
+      var inv = _invoices[i];
+      if (inv.status == 'Unpaid') {
+        try {
+          final due = DateTime.parse(inv.dueDate);
+          final normalizedDue = DateTime(due.year, due.month, due.day);
+          if (normalizedDue.isBefore(today)) {
+            await DBHelper.instance.updateInvoiceStatus(inv.id, 'Overdue');
+            _invoices[i] = Invoice(
+              id: inv.id, companyName: inv.companyName, customerName: inv.customerName,
+              customerEmail: inv.customerEmail, customerPhone: inv.customerPhone,
+              customerAddress: inv.customerAddress, date: inv.date, dueDate: inv.dueDate,
+              status: 'Overdue', taxRate: inv.taxRate, notes: inv.notes, items: inv.items,
+            );
+          }
+        } catch (e) {
+          debugPrint('Error evaluating overdue status: $e');
+        }
+      }
+    }
+
     _customers = await DBHelper.instance.getCustomers();
     _products = await DBHelper.instance.getProducts();
 
@@ -74,6 +100,7 @@ class InvoiceProvider with ChangeNotifier {
     _currencySymbol = settings['currency'] ?? '\$';
     _isDarkMode = (settings['isDarkMode'] ?? 0) == 1;
     _selectedTemplate = settings['selectedTemplate'] ?? 'Simple';
+    _companyEmail = settings['companyEmail'] ?? '';
 
     _isLoading = false;
     notifyListeners();
@@ -105,11 +132,11 @@ class InvoiceProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  // --- NEW: Toggle Customer Favorite ---
+  // --- Toggle Customer Favorite ---
   Future<void> toggleCustomerFavorite(int id, int currentStatus) async {
     final newStatus = currentStatus == 1 ? 0 : 1;
     await DBHelper.instance.toggleCustomerFavorite(id, newStatus);
-    _customers = await DBHelper.instance.getCustomers(); // Refresh to update sorting
+    _customers = await DBHelper.instance.getCustomers();
     notifyListeners();
   }
 
@@ -119,24 +146,31 @@ class InvoiceProvider with ChangeNotifier {
     _currencySymbol = settings['currency'] ?? '\$';
     _isDarkMode = (settings['isDarkMode'] ?? 0) == 1;
     _selectedTemplate = settings['selectedTemplate'] ?? 'Simple';
+    _companyEmail = settings['companyEmail'] ?? '';
     notifyListeners();
   }
 
   Future<void> toggleTheme(bool value) async {
     _isDarkMode = value;
-    final settings = await DBHelper.instance.getSettings();
-    await DBHelper.instance.updateSettings(
-      name: settings['companyName'] ?? 'My Company',
-      address: settings['companyAddress'] ?? '',
-      phone: settings['companyPhone'] ?? '',
-      logoPath: settings['logoPath'] ?? '',
-      currency: settings['currency'] ?? '\$',
-      defaultTaxRate: settings['defaultTaxRate'] ?? 0.0,
-      invoicePrefix: settings['invoicePrefix'] ?? 'INV-',
-      isDarkMode: _isDarkMode,
-      selectedTemplate: _selectedTemplate,
-    );
     notifyListeners();
+
+    try {
+      final settings = await DBHelper.instance.getSettings();
+      await DBHelper.instance.updateSettings(
+        name: settings['companyName'] ?? 'My Company',
+        email: settings['companyEmail'] ?? _companyEmail,
+        address: settings['companyAddress'] ?? '',
+        phone: settings['companyPhone'] ?? '',
+        logoPath: settings['logoPath'] ?? '',
+        currency: settings['currency'] ?? '\$',
+        defaultTaxRate: settings['defaultTaxRate'] ?? 0.0,
+        invoicePrefix: settings['invoicePrefix'] ?? 'INV-',
+        isDarkMode: _isDarkMode,
+        selectedTemplate: _selectedTemplate,
+      );
+    } catch (e) {
+      debugPrint("Error saving theme to DB: $e");
+    }
   }
 
   // --- Update Template ---
@@ -145,6 +179,7 @@ class InvoiceProvider with ChangeNotifier {
     final settings = await DBHelper.instance.getSettings();
     await DBHelper.instance.updateSettings(
       name: settings['companyName'] ?? 'My Company',
+      email: settings['companyEmail'] ?? _companyEmail,
       address: settings['companyAddress'] ?? '',
       phone: settings['companyPhone'] ?? '',
       logoPath: settings['logoPath'] ?? '',

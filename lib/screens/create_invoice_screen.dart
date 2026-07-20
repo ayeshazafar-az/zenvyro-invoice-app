@@ -6,7 +6,7 @@ import 'package:intl/intl.dart';
 import '../services/invoice_provider.dart';
 import '../models/invoice_model.dart';
 import '../database/db_helper.dart';
-import '../services/notification_service.dart'; // Added Notification Import
+import '../services/notification_service.dart';
 
 // --- HELPER CLASS ---
 class ItemInputGroup {
@@ -46,7 +46,10 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
 
   DateTime _invoiceDate = DateTime.now();
   DateTime _dueDate = DateTime.now().add(const Duration(days: 7));
+
   String _invoicePrefix = 'INV-';
+  String _currency = 'Rs';
+  bool _isSaving = false;
 
   final List<ItemInputGroup> _items = [];
 
@@ -60,7 +63,10 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
 
   Future<void> _initializeData() async {
     final settings = await DBHelper.instance.getSettings();
-    setState(() => _invoicePrefix = settings['invoicePrefix'] ?? 'INV-');
+    setState(() {
+      _invoicePrefix = settings['invoicePrefix'] ?? 'INV-';
+      _currency = settings['currency'] ?? 'Rs';
+    });
 
     if (widget.existingInvoice != null) {
       final inv = widget.existingInvoice!;
@@ -108,8 +114,12 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
     for (var item in _items) {
       double qty = double.tryParse(item.qtyController.text) ?? 0;
       double price = double.tryParse(item.priceController.text) ?? 0;
-      double discount = double.tryParse(item.discountController.text) ?? 0;
-      total += (qty * price) - discount;
+      double discountPercent = double.tryParse(item.discountController.text) ?? 0;
+
+      double lineTotal = qty * price;
+      double discountAmount = lineTotal * (discountPercent / 100);
+
+      total += (lineTotal - discountAmount);
     }
     return total;
   }
@@ -117,13 +127,21 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
   double get _taxAmount => _subtotal * ((double.tryParse(_taxRateController.text) ?? 0) / 100);
   double get _grandTotal => _subtotal + _taxAmount;
 
-  void _saveInvoice() async {
-    if (_formKey.currentState!.validate()) {
-      if (_items.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Add at least one item.')));
-        return;
-      }
+  Future<void> _saveInvoice() async {
+    if (_isSaving) return;
 
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    if (_items.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Add at least one product.')));
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    try {
       final provider = Provider.of<InvoiceProvider>(context, listen: false);
 
       final isExisting = provider.customers.any((c) => c['name'] == _customerNameController.text);
@@ -152,16 +170,28 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
         )).toList(),
       );
 
+      // Save the invoice locally
       provider.addInvoice(newInvoice);
 
-      // --- Trigger Notification ---
-      await NotificationService.scheduleNotification(
-        newInvoice.id,
-        newInvoice.customerName,
-        DateTime.parse(newInvoice.dueDate),
-      );
+      // Wrap notification in its own try-catch so it doesn't break the save process
+      try {
+        await NotificationService.scheduleNotification(
+          newInvoice.id,
+          newInvoice.customerName,
+          DateTime.parse(newInvoice.dueDate),
+        );
+      } catch (e) {
+        debugPrint('Notification alarm permission denied, but invoice saved: $e');
+      }
 
       if (mounted) Navigator.pop(context);
+
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error saving invoice: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -177,20 +207,98 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Consumer<InvoiceProvider>(builder: (context, provider, _) {
-                return DropdownButtonFormField<Map<String, dynamic>>(
+                final uniqueCustomers = provider.customers.map((c) => c['name'].toString()).toSet().toList();
+
+                return DropdownButtonFormField<String>(
                   decoration: const InputDecoration(labelText: 'Select from History', border: OutlineInputBorder()),
-                  items: provider.customers.map((c) => DropdownMenuItem(value: c, child: Text(c['name']))).toList(),
-                  onChanged: (val) => val != null ? _fillCustomerDetails(val) : null,
+                  items: uniqueCustomers.map((name) => DropdownMenuItem(value: name, child: Text(name))).toList(),
+                  onChanged: (selectedName) {
+                    if (selectedName != null) {
+                      final customerData = provider.customers.firstWhere((c) => c['name'] == selectedName);
+                      _fillCustomerDetails(customerData);
+                    }
+                  },
                 );
               }),
               const SizedBox(height: 16),
-              TextFormField(controller: _customerNameController, decoration: const InputDecoration(labelText: 'Customer Name *', border: OutlineInputBorder())),
+              TextFormField(
+                controller: _customerNameController,
+                decoration: const InputDecoration(labelText: 'Customer Name *', border: OutlineInputBorder()),
+                validator: (val) => val == null || val.trim().isEmpty ? 'Customer Name is required' : null,
+              ),
               const SizedBox(height: 12),
-              TextFormField(controller: _customerEmailController, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
+              TextFormField(
+                controller: _customerEmailController,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(labelText: 'Email *', border: OutlineInputBorder()),
+                validator: (val) {
+                  if (val == null || val.trim().isEmpty) {
+                    return 'Email is required';
+                  }
+                  final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
+                  if (!emailRegex.hasMatch(val.trim())) {
+                    return 'Enter a valid email address';
+                  }
+                  return null;
+                },
+              ),
               const SizedBox(height: 12),
-              TextFormField(controller: _customerPhoneController, decoration: const InputDecoration(labelText: 'Phone', border: OutlineInputBorder())),
+              TextFormField(
+                  controller: _customerPhoneController,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(labelText: 'Phone', border: OutlineInputBorder())
+              ),
               const SizedBox(height: 12),
               TextFormField(controller: _customerAddressController, maxLines: 2, decoration: const InputDecoration(labelText: 'Address', border: OutlineInputBorder())),
+              const SizedBox(height: 16),
+
+              // UI for Dates (Restricted to prevent past dates)
+              Row(
+                children: [
+                  Expanded(
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Invoice Date', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                      subtitle: Text(DateFormat('yyyy-MM-dd').format(_invoiceDate), style: const TextStyle(fontSize: 16)),
+                      trailing: const Icon(Icons.calendar_today, size: 20),
+                      onTap: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: _invoiceDate,
+                          firstDate: DateTime.now(), // Prevent selecting past dates
+                          lastDate: DateTime(2100),
+                        );
+                        if (picked != null) {
+                          setState(() {
+                            _invoiceDate = picked;
+                            if (_dueDate.isBefore(_invoiceDate)) {
+                              _dueDate = _invoiceDate;
+                            }
+                          });
+                        }
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Due Date', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                      subtitle: Text(DateFormat('yyyy-MM-dd').format(_dueDate), style: const TextStyle(fontSize: 16)),
+                      trailing: const Icon(Icons.calendar_today, size: 20),
+                      onTap: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: _dueDate.isBefore(_invoiceDate) ? _invoiceDate : _dueDate,
+                          firstDate: _invoiceDate, // Cannot be before invoice date or past
+                          lastDate: DateTime(2100),
+                        );
+                        if (picked != null) setState(() => _dueDate = picked);
+                      },
+                    ),
+                  ),
+                ],
+              ),
 
               const SizedBox(height: 24),
               const Text('Products', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
@@ -198,7 +306,11 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
                   child: Padding(padding: const EdgeInsets.all(8), child: Column(children: [
                     Row(children: [
                       Expanded(
-                        child: TextFormField(controller: e.value.nameController, decoration: const InputDecoration(labelText: 'Item Name *')),
+                        child: TextFormField(
+                          controller: e.value.nameController,
+                          decoration: const InputDecoration(labelText: 'Item Name *'),
+                          validator: (val) => val == null || val.trim().isEmpty ? 'Required' : null,
+                        ),
                       ),
                       Consumer<InvoiceProvider>(builder: (context, provider, _) {
                         return PopupMenuButton<Map<String, dynamic>>(
@@ -208,30 +320,76 @@ class _CreateInvoiceScreenState extends State<CreateInvoiceScreen> {
                             e.value.priceController.text = prod['price'].toString();
                           }),
                           itemBuilder: (context) => provider.products.map((prod) =>
-                              PopupMenuItem(value: prod, child: Text('${prod['name']} (\$${prod['price']})'))
+                              PopupMenuItem(value: prod, child: Text('${prod['name']} ($_currency${prod['price']})'))
                           ).toList(),
                         );
                       }),
                       IconButton(icon: const Icon(Icons.delete), onPressed: () => _removeItemRow(e.key))
                     ]),
                     Row(children: [
-                      Expanded(child: TextFormField(controller: e.value.qtyController, decoration: const InputDecoration(labelText: 'Qty'), onChanged: (v) => setState(() {}))),
-                      Expanded(child: TextFormField(controller: e.value.priceController, decoration: const InputDecoration(labelText: 'Price'), onChanged: (v) => setState(() {}))),
-                      Expanded(child: TextFormField(controller: e.value.discountController, decoration: const InputDecoration(labelText: 'Discount'), onChanged: (v) => setState(() {}))),
+                      Expanded(
+                          child: TextFormField(
+                            controller: e.value.qtyController,
+                            decoration: const InputDecoration(labelText: 'Qty *'),
+                            keyboardType: TextInputType.number,
+                            onChanged: (v) => setState(() {}),
+                            validator: (val) => val == null || val.trim().isEmpty ? 'Required' : null,
+                          )
+                      ),
+                      Expanded(
+                          child: TextFormField(
+                            controller: e.value.priceController,
+                            decoration: const InputDecoration(labelText: 'Price *'),
+                            keyboardType: TextInputType.number,
+                            onChanged: (v) => setState(() {}),
+                            validator: (val) => val == null || val.trim().isEmpty ? 'Required' : null,
+                          )
+                      ),
+                      Expanded(
+                          child: TextFormField(
+                            controller: e.value.discountController,
+                            decoration: const InputDecoration(labelText: 'Discount (%)'),
+                            keyboardType: TextInputType.number,
+                            onChanged: (v) => setState(() {}),
+                          )
+                      ),
                     ])
                   ]))
               )),
               TextButton.icon(onPressed: _addNewItemRow, icon: const Icon(Icons.add), label: const Text('Add Item')),
 
+              const SizedBox(height: 16),
+
+              // --- NOTES TEXT FIELD ---
+              TextFormField(
+                controller: _notesController,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  labelText: 'Notes or Payment Instructions',
+                  alignLabelWithHint: true,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  hintText: 'e.g., Please make payment to bank account XYZ...',
+                ),
+              ),
+
               const SizedBox(height: 20),
               Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(children: [
-                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Subtotal'), Text('\$${_subtotal.toStringAsFixed(2)}')],),
-                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Tax (%)'), SizedBox(width: 50, child: TextFormField(controller: _taxRateController, onChanged: (v) => setState(() {})))],),
-                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Total'), Text('\$${_grandTotal.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18))],),
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Subtotal'), Text('$_currency ${_subtotal.toStringAsFixed(2)}')],),
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Tax (%)'), SizedBox(width: 50, child: TextFormField(controller: _taxRateController, keyboardType: TextInputType.number, onChanged: (v) => setState(() {})))],),
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Total'), Text('$_currency ${_grandTotal.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18))],),
               ]))),
 
               const SizedBox(height: 20),
-              SizedBox(width: double.infinity, height: 50, child: ElevatedButton(onPressed: _saveInvoice, child: const Text('Save Invoice'))),
+              SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton(
+                      onPressed: _isSaving ? null : _saveInvoice,
+                      child: _isSaving
+                          ? const CircularProgressIndicator(color: Colors.white)
+                          : const Text('Save Invoice', style: TextStyle(fontSize: 18))
+                  )
+              ),
             ],
           ),
         ),
